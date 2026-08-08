@@ -1,0 +1,56 @@
+# Flatpak manifest for Wallora
+# Build with: flatpak-builder --user --install --force-clean build-dir flatpak/org.wallora.Wallora.yaml
+
+app-id: org.wallora.Wallora
+runtime: org.gnome.Platform
+runtime-version: "47"
+sdk: org.gnome.Sdk
+command: wallora
+
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  # Needed for gsettings, dbus to set wallpaper, detect monitors etc.
+  - --talk-name=org.gnome.SettingsDaemon
+  - --talk-name=org.kde.kwin
+  - --talk-name=org.freedesktop.portal.*
+  - --filesystem=xdg-pictures:ro
+  - --filesystem=xdg-download:ro
+  - --filesystem=xdg-cache/wallora:create
+  - --filesystem=xdg-config/wallora:create
+  # Allow host commands for setting wallpaper in exotic WMs (swww, feh, etc.)
+  - --filesystem=host-os:ro
+  - --filesystem=host-etc:ro
+  # Some DEs need to see the actual image file outside sandbox
+  - --filesystem=home
+
+modules:
+  # Pillow is fetched during build (network allowed for module builds).
+  # This is the standard and simplest approach for pure-Python deps in Flatpak.
+  - name: python3-Pillow
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --prefix=${FLATPAK_DEST} "Pillow>=10.3" --no-build-isolation
+
+
+  - name: wallora
+    buildsystem: simple
+    build-commands:
+      - mkdir -p ${FLATPAK_DEST}/lib/python3.12/site-packages
+      - cp -r src/wallora ${FLATPAK_DEST}/lib/python3.12/site-packages/
+      - install -m 755 -D build-aux/wallora.sh ${FLATPAK_DEST}/bin/wallora
+      - install -Dm644 wallora.desktop ${FLATPAK_DEST}/share/applications/org.wallora.Wallora.desktop
+      - install -Dm644 data/icons/hicolor/scalable/apps/org.wallora.Wallora.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/org.wallora.Wallora.svg || true
+      - install -Dm644 data/icons/hicolor/128x128/apps/org.wallora.Wallora.png ${FLATPAK_DEST}/share/icons/hicolor/128x128/apps/org.wallora.Wallora.png || true
+      - install -Dm644 data/icons/hicolor/256x256/apps/org.wallora.Wallora.png ${FLATPAK_DEST}/share/icons/hicolor/256x256/apps/org.wallora.Wallora.png || true
+      - install -Dm644 data/icons/hicolor/512x512/apps/org.wallora.Wallora.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/org.wallora.Wallora.png || true
+    sources:
+      - type: dir
+        path: ../
+
+  - name: desktop-file-utils
+    buildsystem: simple
+    build-commands:
+      - desktop-file-validate ${FLATPAK_DEST}/share/applications/org.wallora.Wallora.desktop || true

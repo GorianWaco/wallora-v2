@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+build-dir/
+.flatpak-builder/
+*.flatpak
+.cache/
+config/wallora/
+*.log
+current_wallpaper.jpg
+thumbnails/

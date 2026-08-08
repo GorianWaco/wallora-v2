@@ -1,0 +1,28 @@
+Wallora - Zaawansowany menedżer tapet dla Linuksa
+
+INSTALACJA (dla znajomych)
+
+1. Upewnij się, że masz zainstalowany Flatpak:
+   - Arch/Manjaro:     sudo pacman -S flatpak
+   - Fedora:            sudo dnf install flatpak
+   - Ubuntu/Debian:     sudo apt install flatpak
+   - openSUSE:          sudo zypper install flatpak
+
+   Po instalacji zrestartuj sesję (wyloguj i zaloguj się ponownie).
+
+2. Zainstaluj Wallora:
+
+   flatpak install --user Wallora.flatpak
+
+3. Uruchom program:
+
+   flatpak run org.wallora.Wallora
+
+To wszystko! Aplikacja działa jak normalny program.
+
+Uwagi:
+- Przy pierwszym uruchomieniu może pobrać trochę zależności (runtime GNOME).
+- Program ma wbudowaną automatyczną zmianę tapet (działa nawet po zamknięciu okna).
+- Ikona powinna pojawić się w menu aplikacji.
+
+Jeśli coś nie działa, daj znać autorowi.

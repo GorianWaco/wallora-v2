@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3a7bd5;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#00d2ff;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Background rounded square -->
+  <rect x="8" y="8" width="112" height="112" rx="22" fill="url(#g)"/>
+  <!-- Wallpaper symbol -->
+  <rect x="26" y="30" width="76" height="52" rx="6" fill="#ffffff" fill-opacity="0.92"/>
+  <!-- Mountain like shapes -->
+  <polygon points="30,72 52,44 74,72" fill="#3a7bd5"/>
+  <polygon points="58,72 82,40 104,72" fill="#00a1cc"/>
+  <!-- Sun / accent -->
+  <circle cx="92" cy="38" r="8" fill="#ffd700"/>
+  <!-- Bottom bar -->
+  <rect x="26" y="88" width="76" height="8" rx="2" fill="#222"/>
+</svg>

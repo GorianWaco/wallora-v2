@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Wallora 2
+GenericName=Wallpaper Manager
+Comment=Zaawansowany menedżer tapet ze wsparciem animacji (wideo/GIF)
+Exec=wallora
+TryExec=wallora
+Terminal=false
+Categories=Utility;Graphics;GTK;
+Icon=org.wallora.Wallora
+StartupNotify=true
+StartupWMClass=org.wallora.Wallora
+Keywords=wallpaper;tapeta;desktop;background;wallora;animated;video;live;
