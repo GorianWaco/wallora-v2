@@ -131,12 +131,12 @@ class WalloraWindow(Adw.ApplicationWindow):
         sidebar.append(add2)
 
         steam_btn = Gtk.Button(
-            label="Import ze Steam (profil)",
+            label="Import tapet ze Steam",
             icon_name="folder-download-symbolic",
         )
         steam_btn.set_tooltip_text(
-            "Pobierz tło ustawione w profilu Steam (CDN) + cache sklepu. "
-            "Program i tak robi to automatycznie przy starcie."
+            "Ekwipunek Steam + ustawione tło profilu + cache sklepu. "
+            "Animowane (webm/mp4) i statyczne tła profilu."
         )
         steam_btn.connect("clicked", self._on_import_steam)
         steam_btn.set_margin_top(4)
@@ -695,13 +695,21 @@ class WalloraWindow(Adw.ApplicationWindow):
         self._steam_import_busy = True
         if hasattr(self, "_steam_import_btn"):
             self._steam_import_btn.set_sensitive(False)
-        self._show_toast("Import teł profilu Steam…")
+        self._show_toast("Import tapet ze Steam…")
 
         def worker():
             try:
                 from wallora.steam_import import import_and_register
 
-                result = import_and_register(self.config, quality="high", force=False)
+                def progress(msg: str):
+                    GLib.idle_add(self.status_label.set_text, msg[:160])
+
+                result = import_and_register(
+                    self.config,
+                    quality="high",
+                    force=False,
+                    progress=progress,
+                )
 
                 def done():
                     self._steam_import_busy = False
@@ -1543,9 +1551,9 @@ class WalloraWindow(Adw.ApplicationWindow):
         steam_auto_row.connect("notify::active", on_steam_auto)
         lib_group.add(steam_auto_row)
 
-        steam_import_btn = Gtk.Button(label="Import animowanych teł profilu Steam")
+        steam_import_btn = Gtk.Button(label="Import tapet ze Steam")
         steam_import_btn.set_tooltip_text(
-            "Ustawione tło profilu + skan cache Steam (htmlcache) → "
+            "Ekwipunek + ustawione tło + cache Steam → "
             "~/.cache/wallora/steam-profiles/"
         )
         steam_import_btn.connect("clicked", self._on_import_steam)

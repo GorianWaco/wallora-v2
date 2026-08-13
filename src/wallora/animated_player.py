@@ -39,6 +39,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Prefer X11/XWayland so we can set DESKTOP window type (GNOME Wayland).
     if args.backend in ("auto", "x11-desktop") and os.environ.get("DISPLAY"):
+        os.environ.pop("WAYLAND_DISPLAY", None)
         os.environ["GDK_BACKEND"] = "x11"
 
     import gi
@@ -90,12 +91,10 @@ def main(argv: list[str] | None = None) -> int:
         os._exit(code)
 
     def _x11_set_desktop(win: Gtk.Window) -> bool:
-        """Apply EWMH desktop wallpaper hints via python-xlib."""
+        """Apply EWMH desktop wallpaper hints via python-xlib or xprop."""
         try:
             gi.require_version("GdkX11", "4.0")
             from gi.repository import GdkX11
-            from Xlib import X, display as xdisplay
-            from Xlib.xobject.drawable import Window as XWindow
         except Exception as e:
             print(f"X11 deps missing: {e}", file=sys.stderr)
             return False
@@ -117,21 +116,23 @@ def main(argv: list[str] | None = None) -> int:
             return False
 
         try:
+            from Xlib import X, display as xdisplay
+        except Exception:
+            return _x11_desktop_via_xprop(xid)
+
+        try:
             dpy = xdisplay.Display()
             xwin = dpy.create_resource_object("window", xid)
 
             def atom(name: str):
                 return dpy.intern_atom(name)
 
-            # Window type = DESKTOP
             xwin.change_property(
                 atom("_NET_WM_WINDOW_TYPE"),
                 atom("ATOM"),
                 32,
                 [atom("_NET_WM_WINDOW_TYPE_DESKTOP")],
             )
-
-            # States: below, sticky, skip taskbar/pager
             xwin.change_property(
                 atom("_NET_WM_STATE"),
                 atom("ATOM"),
@@ -143,22 +144,48 @@ def main(argv: list[str] | None = None) -> int:
                     atom("_NET_WM_STATE_SKIP_PAGER"),
                 ],
             )
-
-            # All workspaces
             xwin.change_property(
                 atom("_NET_WM_DESKTOP"),
                 atom("CARDINAL"),
                 32,
                 [0xFFFFFFFF],
             )
-
-            # Also lower in stack
             xwin.configure(stack_mode=X.Below)
             dpy.sync()
             return True
         except Exception as e:
             print(f"X11 desktop props failed: {e}", file=sys.stderr)
+            return _x11_desktop_via_xprop(xid)
+
+    def _x11_desktop_via_xprop(xid: int) -> bool:
+        """Fallback when python-xlib is missing."""
+        import shutil
+        import subprocess
+
+        if not shutil.which("xprop"):
             return False
+        wid = hex(xid)
+        cmds = [
+            ["xprop", "-id", wid, "-f", "_NET_WM_WINDOW_TYPE", "32a",
+             "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DESKTOP"],
+            ["xprop", "-id", wid, "-f", "_NET_WM_STATE", "32a",
+             "-set", "_NET_WM_STATE",
+             "_NET_WM_STATE_BELOW, _NET_WM_STATE_STICKY, "
+             "_NET_WM_STATE_SKIP_TASKBAR, _NET_WM_STATE_SKIP_PAGER"],
+        ]
+        ok = True
+        for cmd in cmds:
+            try:
+                subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                ok = False
+        try:
+            from wallora.animated import AnimatedWallpaperManager
+
+            AnimatedWallpaperManager._x11_shape_input_empty(xid)
+        except Exception:
+            pass
+        return ok
 
     def _click_through(win: Gtk.Window) -> None:
         try:

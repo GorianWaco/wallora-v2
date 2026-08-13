@@ -18,6 +18,7 @@ import json
 import re
 import shutil
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -59,15 +60,31 @@ MOVIE_WEBM_SMALL_RE = re.compile(
     r'movie_webm_small\\?"?\s*[:=]\s*\\?"?items/(\d+)/([a-f0-9]+)\.webm',
     re.IGNORECASE,
 )
+MOVIE_MP4_RE = re.compile(
+    r'(?:movie_mp4|item_movie_mp4)\\?"?\s*[:=]\s*\\?"?items/(\d+)/([a-f0-9]+)\.mp4',
+    re.IGNORECASE,
+)
+MOVIE_MP4_SMALL_RE = re.compile(
+    r'movie_mp4_small\\?"?\s*[:=]\s*\\?"?items/(\d+)/([a-f0-9]+)\.mp4',
+    re.IGNORECASE,
+)
+ITEM_IMAGE_ACTION_RE = re.compile(
+    r"https?://[^\s\"']+/images/items/(\d+)/([a-f0-9]+)\.(jpg|jpeg|png|webp)",
+    re.IGNORECASE,
+)
 
 WEBM_MAGIC = b"\x1a\x45\xdf\xa3"
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+VIDEO_EXTS = {".webm", ".mp4"}
 
-# Preview tiles in Point Shop are ~300×168 and usually < 200 KB.
-# Full animated profile BGs are 1920×1080 (or similar), often 0.5–4 MB.
+# Point Shop tiles are ~300×168. Real animated profile BGs start around 640×400.
 MIN_BYTES_HIGH = 200_000
 MIN_WIDTH_HIGH = 960
 MIN_HEIGHT_HIGH = 540
 MIN_BYTES_ANY = 5_000
+SHOP_PREVIEW_MAX_W = 320
+SHOP_PREVIEW_MAX_H = 200
+SHOP_PREVIEW_MAX_BYTES = 40_000
 
 CDN_BASES = (
     "https://shared.fastly.steamstatic.com/community_assets/images/items",
@@ -77,6 +94,7 @@ CDN_BASES = (
 )
 
 ProgressCb = Optional[Callable[[str], None]]
+_INVENTORY_CACHE: dict = {"at": 0.0, "items": None}
 
 
 @dataclass
@@ -208,8 +226,23 @@ def _item_key(appid: str, hashhex: str) -> str:
     return f"{appid}_{hashhex}"
 
 
-def _dest_path(dest_dir: Path, appid: str, hashhex: str) -> Path:
-    return dest_dir / f"steam_{appid}_{hashhex[:12]}.webm"
+def _dest_path(dest_dir: Path, appid: str, hashhex: str, ext: str = "webm") -> Path:
+    ext = str(ext).lstrip(".").lower() or "webm"
+    if ext == "jpeg":
+        ext = "jpg"
+    return dest_dir / f"steam_{appid}_{hashhex[:12]}.{ext}"
+
+
+def _item_ext(info: dict) -> str:
+    ext = str(info.get("ext") or "").lstrip(".").lower()
+    if ext:
+        return "jpg" if ext == "jpeg" else ext
+    url = str(info.get("url") or "")
+    if "." in url.rsplit("/", 1)[-1]:
+        tail = url.rsplit(".", 1)[-1].split("?", 1)[0].lower()
+        if tail in {"webm", "mp4", "jpg", "jpeg", "png", "webp"}:
+            return "jpg" if tail == "jpeg" else tail
+    return "webm"
 
 
 def _load_equipped_history() -> dict[str, dict]:
@@ -258,6 +291,7 @@ def _add_equipped_item(
             "appid": appid,
             "hash": hashhex,
             "url": url,
+            "ext": "webm",
             "source_file": None,
             "body_size": 0,
             "name": name or "",
@@ -298,6 +332,26 @@ def discover_equipped_from_localconfig(
                 if "small" in snippet.lower():
                     continue
                 _add_equipped_item(found, appid, h, source="localconfig")
+        for m in MOVIE_MP4_RE.finditer(text):
+            start = max(0, m.start() - 24)
+            if "small" in text[start : m.start()].lower():
+                continue
+            appid, h = m.group(1), m.group(2).lower()
+            key = _item_key(appid, h)
+            if key in found:
+                continue
+            found[key] = {
+                "appid": appid,
+                "hash": h,
+                "url": f"{CDN_BASES[0]}/{appid}/{h}.mp4",
+                "ext": "mp4",
+                "source_file": None,
+                "body_size": 0,
+                "name": "",
+                "source": "localconfig",
+                "slot": "profile_background",
+                "equipped": True,
+            }
     # Remove any that are known small hashes
     for k in list(found.keys()):
         if k in small_keys:
@@ -341,19 +395,36 @@ def discover_equipped_from_api(
             item = response.get(field_name)
             if not isinstance(item, dict):
                 continue
-            movie = item.get("movie_webm") or ""
-            m = re.match(r"items/(\d+)/([a-f0-9]+)\.webm", str(movie), re.I)
+            movie = item.get("movie_webm") or item.get("movie_mp4") or ""
+            m = re.match(r"items/(\d+)/([a-f0-9]+)\.(webm|mp4)", str(movie), re.I)
             if not m:
                 continue
             name = str(item.get("item_title") or item.get("name") or "")
-            _add_equipped_item(
-                found,
-                m.group(1),
-                m.group(2),
-                name=name,
-                source="api",
-                slot=slot,
-            )
+            ext = m.group(3).lower()
+            if ext == "webm":
+                _add_equipped_item(
+                    found,
+                    m.group(1),
+                    m.group(2),
+                    name=name,
+                    source="api",
+                    slot=slot,
+                )
+            else:
+                appid, h = m.group(1), m.group(2).lower()
+                key = _item_key(appid, h)
+                found[key] = {
+                    "appid": appid,
+                    "hash": h,
+                    "url": f"{CDN_BASES[0]}/{appid}/{h}.mp4",
+                    "ext": "mp4",
+                    "source_file": None,
+                    "body_size": 0,
+                    "name": name,
+                    "source": "api",
+                    "slot": slot,
+                    "equipped": True,
+                }
     return found
 
 
@@ -412,6 +483,210 @@ def discover_equipped_items(*, include_history: bool = True) -> dict[str, dict]:
     return found
 
 
+def _aes128_cbc_decrypt(key: bytes, iv: bytes, data: bytes) -> Optional[bytes]:
+    try:
+        from Cryptodome.Cipher import AES
+
+        return AES.new(key, AES.MODE_CBC, iv).decrypt(data)
+    except ImportError:
+        pass
+    try:
+        from Crypto.Cipher import AES
+
+        return AES.new(key, AES.MODE_CBC, iv).decrypt(data)
+    except ImportError:
+        pass
+    openssl = shutil.which("openssl")
+    if not openssl:
+        return None
+    try:
+        out = subprocess.check_output(
+            [
+                openssl, "enc", "-aes-128-cbc", "-d", "-nopad",
+                "-K", key.hex(),
+                "-iv", iv.hex(),
+            ],
+            input=data,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+        return out
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def _decrypt_chrome_v10(blob: bytes) -> str:
+    if not blob.startswith(b"v10") or len(blob) <= 3:
+        return ""
+    key = __import__("hashlib").pbkdf2_hmac("sha1", b"peanuts", b"saltysalt", 1, 16)
+    plain = _aes128_cbc_decrypt(key, b" " * 16, blob[3:])
+    if not plain:
+        return ""
+    pad = plain[-1]
+    if isinstance(pad, int) and 1 <= pad <= 16:
+        plain = plain[:-pad]
+    return plain.decode("utf-8", "ignore")
+
+
+def read_steam_community_cookies() -> dict[str, str]:
+    """Read steamLoginSecure from the Steam client's Chromium cookie DB."""
+    cookies: dict[str, str] = {}
+    for root in steam_root_candidates():
+        db = root / "config/htmlcache/Default/Cookies"
+        if not db.is_file():
+            continue
+        tmp = None
+        try:
+            import os
+            import sqlite3
+            import tempfile
+
+            fd, tmp_name = tempfile.mkstemp(suffix=".sqlite")
+            os.close(fd)
+            tmp = Path(tmp_name)
+            shutil.copy2(db, tmp)
+            con = sqlite3.connect(f"file:{tmp}?mode=ro", uri=True)
+            rows = con.execute(
+                "SELECT name, value, encrypted_value FROM cookies "
+                "WHERE host_key LIKE '%steamcommunity%'"
+            ).fetchall()
+            con.close()
+            for name, value, enc in rows:
+                if value:
+                    cookies[str(name)] = str(value)
+                elif enc:
+                    cookies[str(name)] = _decrypt_chrome_v10(bytes(enc))
+        except Exception:
+            continue
+        finally:
+            if tmp is not None:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        if cookies.get("steamLoginSecure"):
+            return cookies
+    return cookies
+
+
+def discover_from_inventory(
+    steamids: Optional[Iterable[str]] = None,
+    *,
+    timeout: float = 25.0,
+) -> dict[str, dict]:
+    """Owned Steam profile backgrounds via community inventory (needs Steam login cookie)."""
+    now = time.monotonic()
+    cached = _INVENTORY_CACHE.get("items")
+    if cached is not None and now - float(_INVENTORY_CACHE.get("at") or 0) < 180:
+        return dict(cached)
+
+    found: dict[str, dict] = {}
+    cookies = read_steam_community_cookies()
+    token = cookies.get("steamLoginSecure") or ""
+    if "||" not in token:
+        return found
+    ids = list(steamids) if steamids is not None else find_login_steamids()
+    if not ids:
+        sid = token.split("||", 1)[0]
+        if sid.isdigit():
+            ids = [sid]
+    cookie_header = "; ".join(
+        f"{k}={v}" for k, v in cookies.items() if k in ("steamLoginSecure", "sessionid")
+    )
+
+    for sid in ids:
+        start = ""
+        for _page in range(8):
+            url = (
+                f"https://steamcommunity.com/inventory/{sid}/753/6"
+                f"?l=english&count=2000"
+            )
+            if start:
+                url += f"&start_assetid={start}"
+            try:
+                req = urllib.request.Request(
+                    url,
+                    headers={
+                        "User-Agent": "Wallora/0.2 (Steam inventory import)",
+                        "Accept": "application/json",
+                        "Cookie": cookie_header,
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    data = json.loads(resp.read().decode("utf-8", "replace"))
+            except (
+                urllib.error.URLError,
+                urllib.error.HTTPError,
+                TimeoutError,
+                OSError,
+                ValueError,
+                json.JSONDecodeError,
+            ):
+                break
+            if not isinstance(data, dict) or not data.get("success"):
+                break
+            for desc in data.get("descriptions") or []:
+                if not isinstance(desc, dict):
+                    continue
+                blob = json.dumps(desc)
+                name = str(desc.get("name") or "")
+                tags = desc.get("tags") or []
+                internals = {
+                    str(t.get("internal_name") or "")
+                    for t in tags
+                    if isinstance(t, dict)
+                }
+                is_background = "item_class_3" in internals or "item_class_13" in internals
+                if not is_background and "background" not in str(desc.get("type") or "").lower():
+                    continue
+                for m in ITEM_IMAGE_ACTION_RE.finditer(blob):
+                    appid, h, ext = m.group(1), m.group(2).lower(), m.group(3).lower()
+                    key = _item_key(appid, h)
+                    found[key] = {
+                        "appid": appid,
+                        "hash": h,
+                        "url": m.group(0),
+                        "ext": "jpg" if ext == "jpeg" else ext,
+                        "source_file": None,
+                        "body_size": 0,
+                        "name": name,
+                        "source": "inventory",
+                        "slot": "profile_background",
+                        "equipped": False,
+                    }
+                for rx, ext in (
+                    (MOVIE_WEBM_RE, "webm"),
+                    (MOVIE_WEBM_RE_JSON, "webm"),
+                    (MOVIE_MP4_RE, "mp4"),
+                ):
+                    for m in rx.finditer(blob):
+                        appid, h = m.group(1), m.group(2).lower()
+                        key = _item_key(appid, h)
+                        if key in found and found[key].get("ext") in VIDEO_EXTS:
+                            continue
+                        found[key] = {
+                            "appid": appid,
+                            "hash": h,
+                            "url": f"{CDN_BASES[0]}/{appid}/{h}.{ext}",
+                            "ext": ext,
+                            "source_file": None,
+                            "body_size": 0,
+                            "name": name,
+                            "source": "inventory",
+                            "slot": "mini_profile_background" if "item_class_13" in internals else "profile_background",
+                            "equipped": False,
+                        }
+            if not data.get("more_items"):
+                break
+            start = str(data.get("last_assetid") or "")
+            if not start:
+                break
+    if found:
+        _INVENTORY_CACHE["items"] = found
+        _INVENTORY_CACHE["at"] = time.monotonic()
+    return found
+
+
 def probe_video(path: Path) -> Optional[tuple[int, int]]:
     """Return (width, height) or None if unreadable."""
     if not path.is_file() or path.stat().st_size < MIN_BYTES_ANY:
@@ -458,6 +733,21 @@ def is_high_quality(path: Path, *, min_w: int = MIN_WIDTH_HIGH, min_h: int = MIN
     return w >= min_w and h >= min_h
 
 
+def is_shop_preview(path: Path) -> bool:
+    """True for Point Shop 300×168 tiles — not usable as a wallpaper."""
+    if not path.is_file():
+        return True
+    size = path.stat().st_size
+    if size < SHOP_PREVIEW_MAX_BYTES:
+        return True
+    if path.suffix.lower() in IMAGE_EXTS:
+        return size < 8_000
+    dim = probe_video(path)
+    if not dim:
+        return size < MIN_BYTES_HIGH
+    return dim[0] <= SHOP_PREVIEW_MAX_W and dim[1] <= SHOP_PREVIEW_MAX_H
+
+
 def _extract_webm_body(data: bytes) -> Optional[bytes]:
     i = data.find(WEBM_MAGIC)
     if i < 0:
@@ -501,17 +791,49 @@ def discover_from_cache(
             try:
                 with path.open("rb") as f:
                     head = f.read(min(size, 16_000))
-                    # For potential media bodies, read whole file only if moderate size
-                    # or if header already looks like a webm item URL.
-                    need_full = size <= 12_000_000 and (
-                        WEBM_MAGIC in head or b"images/items/" in head or b".webm" in head
-                    )
+                    if not (
+                        WEBM_MAGIC in head
+                        or b"images/items/" in head
+                        or b".webm" in head
+                        or b"movie_webm" in head
+                        or b"movie_mp4" in head
+                    ):
+                        continue
+                    need_full = size <= 12_000_000
                     full = head
                     if need_full and size > len(head):
                         f.seek(0)
                         full = f.read()
             except OSError:
                 continue
+
+            text_head = full[:64_000].decode("utf-8", "ignore")
+            for rx, ext in (
+                (MOVIE_WEBM_RE, "webm"),
+                (MOVIE_WEBM_RE_JSON, "webm"),
+                (MOVIE_WEBM_RE_ESC, "webm"),
+                (MOVIE_MP4_RE, "mp4"),
+            ):
+                for m in rx.finditer(text_head):
+                    start = max(0, m.start() - 24)
+                    if "small" in text_head[start : m.start()].lower():
+                        continue
+                    appid, h = m.group(1), m.group(2).lower()
+                    key = _item_key(appid, h)
+                    url = f"{CDN_BASES[0]}/{appid}/{h}.{ext}"
+                    entry = found.get(key)
+                    if entry is None:
+                        found[key] = {
+                            "appid": appid,
+                            "hash": h,
+                            "url": url,
+                            "ext": ext,
+                            "source_file": None,
+                            "body_size": 0,
+                        }
+                    elif ext == "webm" and entry.get("ext") != "webm":
+                        entry["ext"] = "webm"
+                        entry["url"] = url
 
             url_matches = list(ITEM_WEBM_URL_RE.finditer(full[:16_000]))
             path_matches = list(ITEM_WEBM_PATH_RE.finditer(full[:16_000])) if not url_matches else []
@@ -537,6 +859,7 @@ def discover_from_cache(
                         "appid": appid,
                         "hash": h,
                         "url": url,
+                        "ext": "webm",
                         "source_file": str(path) if body_size else None,
                         "body_size": body_size,
                     }
@@ -563,7 +886,17 @@ def _download(url: str, dest: Path, timeout: float = 45.0) -> bool:
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = resp.read()
-        if not data.startswith(WEBM_MAGIC) or len(data) < MIN_BYTES_ANY:
+        suffix = dest.suffix.lower()
+        if suffix == ".webm":
+            if not data.startswith(WEBM_MAGIC) or len(data) < MIN_BYTES_ANY:
+                return False
+        elif suffix == ".mp4":
+            if b"ftyp" not in data[:16] or len(data) < MIN_BYTES_ANY:
+                return False
+        elif suffix in IMAGE_EXTS:
+            if len(data) < 2_000:
+                return False
+        elif len(data) < MIN_BYTES_ANY:
             return False
         tmp.write_bytes(data)
         tmp.replace(dest)
@@ -609,8 +942,9 @@ def _candidate_urls(info: dict) -> list[str]:
     if isinstance(u, str) and u.startswith("http"):
         urls.append(u)
     appid, h = info["appid"], info["hash"]
+    ext = _item_ext(info)
     for base in CDN_BASES:
-        cand = f"{base}/{appid}/{h}.webm"
+        cand = f"{base}/{appid}/{h}.{ext}"
         if cand not in urls:
             urls.append(cand)
     return urls
@@ -640,13 +974,16 @@ def _import_item_list(
     for key, info in ordered:
         appid = info["appid"]
         h = info["hash"]
-        out = _dest_path(dest, appid, h)
-        existing_ok = out.exists() and probe_video(out) is not None
+        out = _dest_path(dest, appid, h, _item_ext(info))
+        if out.suffix.lower() in IMAGE_EXTS:
+            existing_ok = out.exists() and out.stat().st_size >= 2_000
+        else:
+            existing_ok = out.exists() and probe_video(out) is not None
         # Equipped full movie_webm: keep if playable; cache scan still uses HD gate
         if equipped_mode:
             existing_hq = existing_ok
         else:
-            existing_hq = existing_ok and (not high_only or is_high_quality(out))
+            existing_hq = existing_ok and (not high_only or not is_shop_preview(out))
 
         if existing_hq and not force:
             result.skipped += 1
@@ -685,15 +1022,15 @@ def _import_item_list(
             result.errors.append(f"Nie udało się: {name}")
             continue
 
-        # Quality gate (skip for known equipped full assets — user chose them)
-        if high_only and not equipped_mode and not is_high_quality(out):
+        # Quality gate: drop Point Shop 300×168 tiles, keep real wallpapers
+        if high_only and not equipped_mode and is_shop_preview(out):
             result.filtered_low_quality += 1
             try:
                 if not existing_hq:
                     out.unlink(missing_ok=True)
             except OSError:
                 pass
-            log(f"  × podgląd niskiej jakości (pominięto) {out.name}")
+            log(f"  × podgląd sklepu (pominięto) {out.name}")
             continue
 
         # Soft gate for equipped: drop only if unreadable or tiny shop preview
@@ -796,12 +1133,13 @@ def import_steam_profile_wallpapers(
     progress: ProgressCb = None,
     include_equipped: bool = True,
     include_cache: bool = True,
+    include_inventory: bool = True,
 ) -> SteamImportResult:
     """
-    Import animated Steam profile backgrounds.
+    Import Steam profile backgrounds (animated + owned stills).
 
     quality:
-      - ``high`` (default): only ≥ ~720p / large files (skip 300×168 shop previews)
+      - ``high`` (default): skip Point Shop 300×168 tiles
       - ``all``: also keep small previews
     prefer_cdn:
       Try CDN first for cleaner full-res files; fall back to cache extract.
@@ -809,6 +1147,8 @@ def import_steam_profile_wallpapers(
       Always try currently equipped + history first (recommended).
     include_cache:
       Also scan Steam htmlcache for shop/profile previews.
+    include_inventory:
+      Owned profile backgrounds via Steam client login cookie.
     """
     dest = Path(dest_dir) if dest_dir else STEAM_PROFILES_DIR
     dest.mkdir(parents=True, exist_ok=True)
@@ -829,7 +1169,34 @@ def import_steam_profile_wallpapers(
         )
         _merge_result(result, eq)
 
-    # 2) Cache / CDN scan (Point Shop previews → HD when available)
+    seen_keys = {
+        _item_key(i["appid"], i["hash"])
+        for i in discover_equipped_items(include_history=True).values()
+    }
+
+    # 2) Owned inventory (static + animated), using Steam client cookies
+    if include_inventory:
+        log("Ekwipunek Steam (tła profilu)…")
+        inv = discover_from_inventory()
+        inv = {k: v for k, v in inv.items() if k not in seen_keys}
+        result.discovered += len(inv)
+        log(f"Ekwipunek: {len(inv)} teł")
+        if inv:
+            _import_item_list(
+                inv,
+                dest,
+                result,
+                high_only=False,
+                prefer_cdn=True,
+                force=force,
+                log=log,
+                equipped_mode=True,
+            )
+            seen_keys.update(inv)
+        else:
+            log("Brak teł w ekwipunku (zaloguj się w kliencie Steam).")
+
+    # 3) Cache / CDN scan (Point Shop previews → HD when available)
     if include_cache:
         cache_dirs = find_htmlcache_dirs()
         if cache_dirs:
@@ -838,13 +1205,7 @@ def import_steam_profile_wallpapers(
             log("Nie znaleziono Steam htmlcache.")
 
         items = discover_from_cache(cache_dirs)
-        # Avoid re-processing equipped hashes already handled
-        if include_equipped:
-            eq_keys = {
-                _item_key(i["appid"], i["hash"])
-                for i in discover_equipped_items(include_history=True).values()
-            }
-            items = {k: v for k, v in items.items() if k not in eq_keys}
+        items = {k: v for k, v in items.items() if k not in seen_keys}
 
         result.discovered += len(items)
         log(f"Znaleziono {len(items)} unikalnych assetów .webm w cache/URL")
@@ -869,13 +1230,13 @@ def import_steam_profile_wallpapers(
     # Remove leftover low-quality files from older imports when high_only
     if high_only:
         keep_equipped = {
-            _dest_path(dest, i["appid"], i["hash"]).name
+            _dest_path(dest, i["appid"], i["hash"], _item_ext(i)).name
             for i in discover_equipped_items(include_history=True).values()
         }
-        for p in dest.glob("steam_*.webm"):
+        for p in list(dest.glob("steam_*.webm")) + list(dest.glob("steam_*.mp4")):
             if p.name in keep_equipped:
                 continue
-            if p.is_file() and not is_high_quality(p):
+            if p.is_file() and is_shop_preview(p):
                 try:
                     p.unlink()
                     log(f"  usunięto stary podgląd {p.name}")
@@ -904,6 +1265,7 @@ def import_and_register(
     progress: ProgressCb = None,
     include_equipped: bool = True,
     include_cache: bool = True,
+    include_inventory: bool = True,
 ) -> SteamImportResult:
     dest = ensure_library_folder(config)
     return import_steam_profile_wallpapers(
@@ -913,6 +1275,7 @@ def import_and_register(
         progress=progress,
         include_equipped=include_equipped,
         include_cache=include_cache,
+        include_inventory=include_inventory,
     )
 
 

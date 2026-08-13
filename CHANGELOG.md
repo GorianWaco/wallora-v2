@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.7 — import tapet ze Steam (ekwipunek + wideo)
+
+### Naprawione
+- Import nie kasuje już prawdziwych teł jako „za słabe” (odrzuca tylko kafelki sklepu ~300×168)
+- W GUI widać postęp importu zamiast milczenia przez kilka minut
+- Pobierane są też **MP4** (nie tylko webm)
+- Animowana tapeta nie jest już oknem nad pulpitem: kursor zostaje, mysz przechodzi na wylot (GNOME Wayland / XWayland)
+
+### Dodane
+- Import **ekwipunku** Steam (zalogowany klient): posiadane tła profilu
+- Przycisk: „Import tapet ze Steam”
+
 ## 0.2.6 — przywracanie animowanej tapety po restarcie
 
 ### Dodane

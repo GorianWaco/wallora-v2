@@ -42,7 +42,7 @@ class WalloraApp(Adw.Application):
             application_name="Wallora",
             application_icon=APP_ID,
             developer_name="Wallora Team",
-            version="0.2.6",
+            version="0.2.7",
             comments="Tapety animowane + przywracanie po restarcie + Steam",
             website="https://github.com/example/wallora",
             issue_url="https://github.com/example/wallora/issues",

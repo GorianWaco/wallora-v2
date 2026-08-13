@@ -14,6 +14,7 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -365,11 +366,17 @@ class AnimatedWallpaperManager:
         parts = [
             "no-osc",
             "no-input-default-bindings",
+            "no-input-builtin-bindings",
+            "no-input-builtin-dragging",
             "input-cursor=no",
-            "cursor-autohide=always",
+            "input-cursor-passthrough=yes",
+            "input-vo-keyboard=no",
+            "cursor-autohide=no",
+            "focus-on=never",
             "really-quiet",
             "hwdec=auto",
             "vo=gpu",
+            "gpu-context=x11egl",
         ]
         if mute:
             parts.append("no-audio")
@@ -378,73 +385,99 @@ class AnimatedWallpaperManager:
         return " ".join(parts)
 
     @staticmethod
-    def _x11_mark_desktop_by_title(title: str, timeout: float = 5.0) -> bool:
-        """Find X11 window by WM_NAME and set DESKTOP + below + skip-taskbar."""
+    def _x11_window_ids_by_title(title: str) -> list[str]:
+        if not shutil.which("xprop"):
+            return []
         try:
-            from Xlib import X, display as xdisplay
+            listing = subprocess.check_output(
+                ["xprop", "-root", "_NET_CLIENT_LIST"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+        except (subprocess.CalledProcessError, OSError):
+            return []
+        hits: list[str] = []
+        for wid in re.findall(r"0x[0-9a-fA-F]+", listing):
+            try:
+                info = subprocess.check_output(
+                    ["xprop", "-id", wid, "WM_NAME", "_NET_WM_NAME"],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                )
+            except (subprocess.CalledProcessError, OSError):
+                continue
+            if title in info:
+                hits.append(wid)
+        return hits
+
+    @staticmethod
+    def _x11_shape_input_empty(xid: int) -> bool:
+        """Best-effort click-through. Isolated: a bad Xlib bind must not crash us."""
+        try:
+            rc = subprocess.run(
+                [
+                    sys.executable, "-c",
+                    (
+                        "import ctypes,sys\n"
+                        "xid=int(sys.argv[1])\n"
+                        "x11=ctypes.cdll.LoadLibrary('libX11.so.6')\n"
+                        "xext=ctypes.cdll.LoadLibrary('libXext.so.6')\n"
+                        "x11.XOpenDisplay.restype=ctypes.c_void_p\n"
+                        "dpy=x11.XOpenDisplay(None)\n"
+                        "sys.exit(1 if not dpy else 0) if False else None\n"
+                        "if not dpy: raise SystemExit(1)\n"
+                        "xext.XShapeCombineRectangles(dpy,xid,2,0,0,None,0,0,0)\n"
+                        "x11.XSync(dpy,False)\n"
+                        "x11.XCloseDisplay(dpy)\n"
+                    ),
+                    str(xid),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+            )
+            return rc.returncode == 0
         except Exception:
             return False
 
+    @classmethod
+    def _x11_apply_desktop_hints(cls, wid: str) -> bool:
+        if not shutil.which("xprop"):
+            return False
+        cmds = [
+            [
+                "xprop", "-id", wid,
+                "-f", "_NET_WM_WINDOW_TYPE", "32a",
+                "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DESKTOP",
+            ],
+            [
+                "xprop", "-id", wid,
+                "-f", "_NET_WM_STATE", "32a",
+                "-set", "_NET_WM_STATE",
+                "_NET_WM_STATE_BELOW, _NET_WM_STATE_STICKY, "
+                "_NET_WM_STATE_SKIP_TASKBAR, _NET_WM_STATE_SKIP_PAGER",
+            ],
+            [
+                "xprop", "-id", wid,
+                "-f", "_NET_WM_DESKTOP", "32c",
+                "-set", "_NET_WM_DESKTOP", "4294967295",
+            ],
+        ]
+        ok = all(_run(cmd) for cmd in cmds)
+        try:
+            cls._x11_shape_input_empty(int(wid, 16))
+        except ValueError:
+            pass
+        return ok
+
+    @classmethod
+    def _x11_mark_desktop_by_title(cls, title: str, timeout: float = 5.0) -> bool:
+        """Find X11 window by name and pin it as a click-through desktop layer."""
         deadline = time.time() + timeout
         while time.time() < deadline:
-            try:
-                dpy = xdisplay.Display()
-                root = dpy.screen().root
-                net_client = dpy.intern_atom("_NET_CLIENT_LIST")
-                wm_name = dpy.intern_atom("WM_NAME")
-                atom_type = dpy.intern_atom("ATOM")
-                cardinal = dpy.intern_atom("CARDINAL")
-
-                prop = root.get_full_property(net_client, X.AnyPropertyType)
-                if not prop:
-                    time.sleep(0.15)
-                    continue
-
-                for xid in prop.value:
-                    try:
-                        win = dpy.create_resource_object("window", xid)
-                        name_prop = win.get_full_property(wm_name, X.AnyPropertyType)
-                        if not name_prop:
-                            continue
-                        name = name_prop.value
-                        if isinstance(name, bytes):
-                            name = name.decode("utf-8", "ignore")
-                        if title not in str(name):
-                            continue
-
-                        def atom(n: str):
-                            return dpy.intern_atom(n)
-
-                        win.change_property(
-                            atom("_NET_WM_WINDOW_TYPE"),
-                            atom_type,
-                            32,
-                            [atom("_NET_WM_WINDOW_TYPE_DESKTOP")],
-                        )
-                        win.change_property(
-                            atom("_NET_WM_STATE"),
-                            atom_type,
-                            32,
-                            [
-                                atom("_NET_WM_STATE_BELOW"),
-                                atom("_NET_WM_STATE_STICKY"),
-                                atom("_NET_WM_STATE_SKIP_TASKBAR"),
-                                atom("_NET_WM_STATE_SKIP_PAGER"),
-                            ],
-                        )
-                        win.change_property(
-                            atom("_NET_WM_DESKTOP"),
-                            cardinal,
-                            32,
-                            [0xFFFFFFFF],
-                        )
-                        win.configure(stack_mode=X.Below)
-                        dpy.sync()
-                        return True
-                    except Exception:
-                        continue
-            except Exception:
-                pass
+            for wid in cls._x11_window_ids_by_title(title):
+                if cls._x11_apply_desktop_hints(wid):
+                    return True
             time.sleep(0.15)
         return False
 
@@ -512,12 +545,19 @@ class AnimatedWallpaperManager:
             "--really-quiet",
             "--no-osc",
             "--no-input-default-bindings",
+            "--no-input-builtin-bindings",
+            "--no-input-builtin-dragging",
             "--input-cursor=no",
-            "--cursor-autohide=always",
+            "--input-cursor-passthrough",
+            "--input-vo-keyboard=no",
+            "--cursor-autohide=no",
+            "--focus-on=never",
             "--no-border",
             "--geometry=100%x100%+0+0",
             "--panscan=1.0",
             "--hwdec=auto",
+            "--vo=gpu",
+            "--gpu-context=x11egl",
             "--x11-name=wallora-desktop",
             "--stop-screensaver=no",
             "--keep-open=yes",
@@ -530,8 +570,10 @@ class AnimatedWallpaperManager:
 
         try:
             env = os.environ.copy()
-            # Prefer X11 for DESKTOP window type
-            env.setdefault("GDK_BACKEND", "x11")
+            # Native Wayland mpv is a normal GNOME app window (steals hover/cursor).
+            # Force XWayland so we can mark it DESKTOP + click-through.
+            env.pop("WAYLAND_DISPLAY", None)
+            env["GDK_BACKEND"] = "x11"
             self._proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
@@ -616,6 +658,7 @@ class AnimatedWallpaperManager:
             env["PYTHONPATH"] = src_root + os.pathsep + env.get("PYTHONPATH", "")
             # Force XWayland for DESKTOP window type (critical on GNOME Wayland)
             if env.get("DISPLAY"):
+                env.pop("WAYLAND_DISPLAY", None)
                 env["GDK_BACKEND"] = "x11"
 
             # Log to file for debugging player issues
