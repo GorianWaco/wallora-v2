@@ -30,7 +30,13 @@ Statyczne obrazy działają jak w v1 (korekcja, skalowanie, slideshow).
 
 ## Instalacja (Flatpak)
 
-Gotowy pakiet jest na GitHub Releases:
+Jedna komenda (dla znajomych):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/GorianWaco/wallora-v2/main/install.sh | bash
+```
+
+Albo ręcznie z GitHub Releases:
 
 https://github.com/GorianWaco/wallora-v2/releases/latest
 

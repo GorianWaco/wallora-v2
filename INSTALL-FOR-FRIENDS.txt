@@ -1,6 +1,17 @@
 Wallora 2 — menedżer tapet (także animowanych)
 
-INSTALACJA Z GITHUBA
+NAJSZYBCIEJ (jedna komenda)
+
+  curl -fsSL https://raw.githubusercontent.com/GorianWaco/wallora-v2/main/install.sh | bash
+
+Skrypt sam sprawdzi Flatpak, doda Flathub, pobierze paczkę z GitHuba i zainstaluje.
+
+Odinstalowanie:
+
+  curl -fsSL https://raw.githubusercontent.com/GorianWaco/wallora-v2/main/install.sh | bash -s -- --uninstall
+
+
+INSTALACJA RĘCZNA
 
 1. Zainstaluj Flatpak (jeśli jeszcze nie masz):
    - Arch / CachyOS / Manjaro:  sudo pacman -S flatpak
@@ -25,8 +36,8 @@ INSTALACJA Z GITHUBA
 
    flatpak run org.wallora.Wallora
 
-Aktualizacja: pobierz nowszy plik .flatpak i zainstaluj go ponownie
-(flatpak install --user Wallora-*.flatpak).
+Aktualizacja: odpal ten sam skrypt instalacyjny jeszcze raz
+albo zainstaluj nowszy plik .flatpak.
 
 Jeśli animowane tapety nie odtwarzają wideo:
 
