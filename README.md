@@ -202,9 +202,7 @@ Nowe klucze `animated.*` są ignorowane przez starą wersję.
 
 ## Stara wersja
 
-```bash
-cd ~/Projekty/wallora && ./run
-```
+Lokalnie v1 zostaje w `~/Projekty/wallora/` (nie jest publikowana tutaj).
 
 ## Licencja
 
