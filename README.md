@@ -1,16 +1,48 @@
 # Wallora 2 — menedżer tapet z animacjami
 
-To jest **nowa wersja (0.2.0)** Wallory. Stara wersja (0.1.x) pozostaje nietknięta w:
+Aplikacja na Linuxa: tapety statyczne i animowane (MP4, WebM, GIF…), kopia ulubionych poza systemem, import teł ze Steam.
 
-```text
-~/Projekty/wallora/
+**Pełna instrukcja:** [INSTALL.md](INSTALL.md)  
+**Paczka:** [GitHub Releases](https://github.com/GorianWaco/wallora-v2/releases/latest)
+
+## Instalacja
+
+Najszybciej — jedna komenda w terminalu:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/GorianWaco/wallora-v2/main/install.sh | bash
 ```
 
-Ten katalog:
+Potem menu aplikacji → **Wallora 2**, albo:
 
-```text
-~/Projekty/wallora-v2/
+```bash
+flatpak run org.wallora.Wallora
 ```
+
+Ręcznie z pliku `.flatpak`:
+
+1. Zainstaluj Flatpak (Arch: `sudo pacman -S flatpak`, Fedora: `sudo dnf install flatpak`, Ubuntu: `sudo apt install flatpak`).
+2. Dodaj Flathub:
+
+   ```bash
+   flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+   ```
+
+3. Pobierz `Wallora-*.flatpak` z [Releases](https://github.com/GorianWaco/wallora-v2/releases/latest).
+4. Zainstaluj:
+
+   ```bash
+   flatpak install --user Wallora-0.2.12.flatpak
+   ```
+
+Odinstalowanie:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/GorianWaco/wallora-v2/main/install.sh | bash -s -- --uninstall
+```
+
+Zbudowanie paczki u siebie: `./build-flatpak.sh`.  
+Zależności i instalacja ze źródeł: [INSTALL.md](INSTALL.md).
 
 ## Co nowego w v2
 
@@ -28,43 +60,18 @@ Ten katalog:
 
 Statyczne obrazy działają jak w v1 (korekcja, skalowanie, slideshow).
 
-## Instalacja (Flatpak)
-
-Jedna komenda (dla znajomych):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/GorianWaco/wallora-v2/main/install.sh | bash
-```
-
-Albo ręcznie z GitHub Releases:
-
-https://github.com/GorianWaco/wallora-v2/releases/latest
-
-```bash
-flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-flatpak install --user Wallora-0.2.12.flatpak
-flatpak run org.wallora.Wallora
-```
-
-Zbudowanie pakietu lokalnie:
-
-```bash
-./build-flatpak.sh
-```
-
-Szczegóły: `INSTALL-FOR-FRIENDS.txt`.
-
 ## Uruchomienie (z źródeł)
 
 ```bash
-cd ~/Projekty/wallora-v2
+git clone https://github.com/GorianWaco/wallora-v2.git
+cd wallora-v2
 ./run
 ```
 
 lub:
 
 ```bash
-cd ~/Projekty/wallora-v2
+cd wallora-v2
 PYTHONPATH=src python3 -m wallora.main
 ```
 
@@ -167,6 +174,9 @@ Uwagi:
 
 ```text
 wallora-v2/
+├── INSTALL.md               # instrukcja instalacji
+├── install.sh               # instalator Flatpaka z GitHuba
+├── INSTALL-FOR-FRIENDS.txt  # krótka ściąga
 ├── src/wallora/
 │   ├── animated.py          # menedżer backendów animacji
 │   ├── animated_player.py   # odłączony player GTK

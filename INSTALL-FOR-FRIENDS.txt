@@ -1,10 +1,18 @@
 Wallora 2 — menedżer tapet (także animowanych)
 
+Pełna instrukcja: INSTALL.md
+https://github.com/GorianWaco/wallora-v2/blob/main/INSTALL.md
+
 NAJSZYBCIEJ (jedna komenda)
 
   curl -fsSL https://raw.githubusercontent.com/GorianWaco/wallora-v2/main/install.sh | bash
 
 Skrypt sam sprawdzi Flatpak, doda Flathub, pobierze paczkę z GitHuba i zainstaluje.
+
+Uruchomienie:
+
+  menu aplikacji → Wallora 2
+  albo:  flatpak run org.wallora.Wallora
 
 Odinstalowanie:
 
@@ -19,6 +27,8 @@ INSTALACJA RĘCZNA
    - Ubuntu / Debian:           sudo apt install flatpak
    - openSUSE:                  sudo zypper install flatpak
 
+   Po instalacji wyloguj się i zaloguj.
+
 2. Dodaj Flathub (potrzebny runtime GNOME):
 
    flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
@@ -32,7 +42,7 @@ INSTALACJA RĘCZNA
 
    Przy pierwszym razie Flatpak dociągnie środowisko GNOME (~400 MB).
 
-5. Uruchom z menu aplikacji albo:
+5. Uruchom program:
 
    flatpak run org.wallora.Wallora
 
