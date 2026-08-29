@@ -2,7 +2,9 @@
 Type=Application
 Name=Wallora 2
 GenericName=Wallpaper Manager
-Comment=Zaawansowany menedżer tapet ze wsparciem animacji (wideo/GIF)
+GenericName[pl]=Menedżer tapet
+Comment=Advanced wallpaper manager with animated video/GIF support
+Comment[pl]=Zaawansowany menedżer tapet ze wsparciem animacji (wideo/GIF)
 Exec=wallora
 Terminal=false
 Categories=Utility;Graphics;GTK;

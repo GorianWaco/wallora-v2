@@ -24,10 +24,31 @@ Ten katalog:
   - **xwinwrap + mpv** — X11
 - 🧩 Klatka plakatu (ffmpeg) ustawiana jako statyczna tapeta DE (Overview / lock screen)
 - ⚙️ Preferencje: wyciszenie, pętla, backend, slideshow bez wideo
+- ⭐ **Kopia ulubionych poza systemem** — folder (Dokumenty / drugi dysk / Nextcloud), żeby tapety nie zginęły przy reinstalacji
 
 Statyczne obrazy działają jak w v1 (korekcja, skalowanie, slideshow).
 
-## Uruchomienie
+## Instalacja (Flatpak)
+
+Gotowy pakiet jest na GitHub Releases:
+
+https://github.com/GorianWaco/wallora-v2/releases/latest
+
+```bash
+flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user Wallora-0.2.12.flatpak
+flatpak run org.wallora.Wallora
+```
+
+Zbudowanie pakietu lokalnie:
+
+```bash
+./build-flatpak.sh
+```
+
+Szczegóły: `INSTALL-FOR-FRIENDS.txt`.
+
+## Uruchomienie (z źródeł)
 
 ```bash
 cd ~/Projekty/wallora-v2
@@ -47,6 +68,8 @@ CLI:
 ./run --random                    # losowa statyczna tapeta
 ./run --restore-animated          # wznów animację po restarcie (autostart)
 ./run --stop-animated             # zatrzymaj animowaną tapetę (+ wyłącz autostart)
+./run --export-favorites          # skopiuj ulubione do folderu kopii
+./run --restore-favorites         # przywróć ulubione z folderu (po reinstalacji)
 ./run --import-steam-profiles     # tła profilu Steam → biblioteka
 ./run --import-steam-profiles --equipped-only  # tylko ustawione w profilu (+ historia)
 ./run --import-steam-profiles --force   # nadpisz już pobrane
@@ -58,10 +81,26 @@ CLI:
 Animowana tapeta to osobny proces — po reboocie znika, zostaje tylko klatka plakatu.
 Od **0.2.6** przy ustawieniu animacji tworzony jest autostart:
 
-`~/.config/autostart/org.wallora.Wallora.animated.desktop`
+`~/.config/autostart/org.wallora.Wallora.animated.desktop`  
+oraz usługa użytkownika `wallora-restore-animated.service`.
 
-który uruchamia `wallora --restore-animated` przy logowaniu.  
-Zatrzymanie animacji w UI usuwa ten autostart.
+Na GNOME 49/50 sam plik `.desktop` z `X-GNOME-Autostart-Phase` jest pomijany —
+dlatego restore idzie też przez systemd (`WantedBy=graphical-session.target`).
+Restore importuje `DISPLAY`/`WAYLAND_DISPLAY` z sesji, czeka aż GNOME/XWayland
+będą gotowe, a potem osobny proces przez ~90 s utrzymuje okno jako warstwę
+pulpitu (nie zwykły odtwarzacz).
+Zatrzymanie animacji w UI usuwa autostart i usługę.
+
+### Ulubione, które przeżyją reinstalację
+
+Ulubione w `~/.config/wallora` i tła ze Steam w `~/.cache` znikają razem z systemem.
+
+W **Preferencjach → Ulubione poza systemem** wskaż folder poza instalacją
+(np. `~/Dokumenty/Wallora-ulubione`, drugi dysk, Nextcloud).  
+Każda tapeta oznaczona ★ jest tam kopiowana.
+
+Po reinstalacji: ten sam folder → **Przywróć ulubione z folderu**
+(albo `./run --restore-favorites /ścieżka/do/folderu`).
 
 ### Tła profilu Steam na pulpicie
 
@@ -125,6 +164,7 @@ wallora-v2/
 ├── src/wallora/
 │   ├── animated.py          # menedżer backendów animacji
 │   ├── animated_player.py   # odłączony player GTK
+│   ├── favorites_vault.py   # kopie ulubionych poza systemem
 │   ├── window.py
 │   ├── library.py           # skan obrazów + wideo
 │   └── ...
@@ -139,6 +179,7 @@ Współdzielona z v1 (te same foldery biblioteki):
 ```text
 ~/.config/wallora/config.json
 ~/.cache/wallora/
+# plus Twój folder kopii ulubionych (np. ~/Dokumenty/Wallora-ulubione)
 ```
 
 Nowe klucze `animated.*` są ignorowane przez starą wersję.

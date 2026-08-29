@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 build-dir/
 .flatpak-builder/
+flatpak-repo/
 *.flatpak
 .cache/
 config/wallora/

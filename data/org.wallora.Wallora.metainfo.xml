@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.wallora.Wallora</id>
+  <name>Wallora 2</name>
+  <summary>Wallpaper manager with animated video support</summary>
+  <summary xml:lang="pl">Menedżer tapet ze wsparciem animacji</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.gorianwaco">
+    <name>GorianWaco</name>
+  </developer>
+  <url type="homepage">https://github.com/GorianWaco/wallora-v2</url>
+  <url type="bugtracker">https://github.com/GorianWaco/wallora-v2/issues</url>
+  <description>
+    <p>
+      Wallora 2 is a GTK4/libadwaita wallpaper manager for Linux. It handles
+      static images (color correction, scaling, slideshow) and animated
+      wallpapers (MP4, WebM, MKV, MOV, AVI, GIF).
+    </p>
+    <p xml:lang="pl">
+      Wallora 2 to menedżer tapet GTK4/libadwaita dla Linuksa. Obsługuje
+      statyczne obrazy (korekcja, skalowanie, slideshow) oraz animowane
+      tapety (MP4, WebM, MKV, MOV, AVI, GIF).
+    </p>
+    <ul>
+      <li>Animated wallpapers on GNOME, Hyprland/Sway and X11</li>
+      <li>Favorites vault outside the system disk</li>
+      <li>Import of Steam profile backgrounds</li>
+      <li>Restore live wallpaper after login</li>
+    </ul>
+    <ul xml:lang="pl">
+      <li>Animowane tapety na GNOME, Hyprland/Sway i X11</li>
+      <li>Kopia ulubionych poza systemem</li>
+      <li>Import teł profilu Steam</li>
+      <li>Przywracanie animacji po zalogowaniu</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">org.wallora.Wallora.desktop</launchable>
+  <provides>
+    <binary>wallora</binary>
+  </provides>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <recommends>
+    <display_length compare="ge">768</display_length>
+  </recommends>
+  <content_rating type="oars-1.1"/>
+  <categories>
+    <category>Utility</category>
+    <category>Graphics</category>
+    <category>GTK</category>
+  </categories>
+  <releases>
+    <release version="0.2.12" date="2026-08-29">
+      <description>
+        <p>Fix restore after logout so the wallpaper starts in the new session instead of a leftover process.</p>
+        <p xml:lang="pl">Naprawa przywracania tapety po wylogowaniu — nowa sesja zamiast procesu-zombie.</p>
+      </description>
+    </release>
+  </releases>
+</component>

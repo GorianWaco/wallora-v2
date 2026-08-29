@@ -16,6 +16,7 @@ from gi.repository import Adw, Gdk, GdkPixbuf, Gio, GLib, Gtk
 
 from wallora.animated import AnimatedWallpaperManager
 from wallora.config import Config
+from wallora.favorites_vault import FavoritesVault
 from wallora.library import Library
 from wallora.models import WallpaperItem
 from wallora.processor import ImageProcessor
@@ -38,6 +39,9 @@ class WalloraWindow(Adw.ApplicationWindow):
         self.setter = WallpaperSetter()
         self.slideshow = Slideshow(self.config)
         self.animated = AnimatedWallpaperManager()
+        self.vault = FavoritesVault(self.config)
+        self._prefs_win: Optional[Adw.PreferencesWindow] = None
+        self._vault_folder_row: Optional[Adw.ActionRow] = None
 
         self._current_item: Optional[WallpaperItem] = None
         self._current_adjustments = self.config.get("adjustments", {}).copy()
@@ -256,12 +260,7 @@ class WalloraWindow(Adw.ApplicationWindow):
         reset_btn = Gtk.Button(label="Przywróć oryginalne", icon_name="edit-undo-symbolic")
         reset_btn.set_tooltip_text("Przywróć wszystkie ustawienia korekcji obrazu do wartości oryginalnych")
         reset_btn.connect("clicked", self._on_reset_adjustments)
-
-        fav_btn = Gtk.Button(label="★ Ulubiona", icon_name="starred-symbolic")
-        fav_btn.connect("clicked", self._on_toggle_favorite)
-
         btn_box.append(reset_btn)
-        btn_box.append(fav_btn)
         corr_box.append(btn_box)
 
         sidebar.append(corr_scroll)
@@ -455,6 +454,15 @@ class WalloraWindow(Adw.ApplicationWindow):
         self.apply_btn.connect("clicked", self._on_apply_clicked)
         self.apply_btn.set_sensitive(False)
 
+        self.fav_btn = Gtk.Button(label="★ Do ulubionych")
+        self.fav_btn.add_css_class("pill")
+        self.fav_btn.set_tooltip_text(
+            "Oznacz jako ulubioną. Jeśli masz folder kopii w Preferencjach, "
+            "plik zapisze się tam (przeżyje reinstalację)."
+        )
+        self.fav_btn.connect("clicked", self._on_toggle_favorite)
+        self.fav_btn.set_sensitive(False)
+
         # Save button (new)
         self.save_btn = Gtk.Button(label="Zapisz jako...")
         self.save_btn.set_tooltip_text("Zapisz przetworzoną wersję na dysk")
@@ -462,6 +470,7 @@ class WalloraWindow(Adw.ApplicationWindow):
         self.save_btn.set_sensitive(False)
 
         actions_box.append(self.apply_btn)
+        actions_box.append(self.fav_btn)
         actions_box.append(self.save_btn)
         preview_area.append(actions_box)
 
@@ -471,6 +480,15 @@ class WalloraWindow(Adw.ApplicationWindow):
         apply_raw_btn.set_tooltip_text("Ustaw oryginalny plik bez żadnych zmian")
         apply_raw_btn.connect("clicked", self._on_apply_raw_clicked)
         secondary_box.append(apply_raw_btn)
+
+        self.save_fav_btn = Gtk.Button(label="Zapisz kopię ulubionej…")
+        self.save_fav_btn.set_tooltip_text(
+            "Kopiuje wybraną tapetę do folderu poza systemem "
+            "(przeżyje reinstalację). Folder ustawiasz w Preferencjach."
+        )
+        self.save_fav_btn.connect("clicked", self._on_save_favorite_copy)
+        self.save_fav_btn.set_sensitive(False)
+        secondary_box.append(self.save_fav_btn)
         preview_area.append(secondary_box)
 
         # Status
@@ -594,6 +612,13 @@ class WalloraWindow(Adw.ApplicationWindow):
                 if Path(d).is_dir():
                     self.config.add_library_folder(d)
                     folders.append(d)
+
+        try:
+            healed = self.vault.heal_missing_favorites()
+            if healed:
+                print(f"Favorites vault: odzyskano {healed} ścieżek")
+        except Exception as e:
+            print("Favorites vault heal failed:", e)
 
         self._refresh_folders_list()
         self.library.scan(on_finished=self._on_scan_finished)
@@ -824,13 +849,19 @@ class WalloraWindow(Adw.ApplicationWindow):
             badge.set_tooltip_text("Animowana tapeta (wideo/GIF)")
             badge_box.append(badge)
 
-        if self.config.is_favorite(str(item.path)):
-            star = Gtk.Label(label="★")
-            star.add_css_class("accent")
-            badge_box.append(star)
+        is_fav = self.config.is_favorite(str(item.path))
+        star_btn = Gtk.Button(label="★" if is_fav else "☆")
+        star_btn.add_css_class("flat")
+        star_btn.add_css_class("circular")
+        if is_fav:
+            star_btn.add_css_class("accent")
+        star_btn.set_tooltip_text(
+            "Usuń z ulubionych" if is_fav else "Dodaj do ulubionych"
+        )
+        star_btn.connect("clicked", self._on_row_star_clicked, item)
+        badge_box.append(star_btn)
 
-        if badge_box.get_first_child():
-            row_box.append(badge_box)
+        row_box.append(badge_box)
 
         row_box.append(pic)
 
@@ -859,9 +890,12 @@ class WalloraWindow(Adw.ApplicationWindow):
         self._current_item = item
         kind = "🎬 animacja" if item.is_animated else "🖼️ obraz"
         self.file_label.set_text(f"{kind}  ·  {item.path}")
+        self._update_fav_button()
 
         # Enable action buttons
         self.apply_btn.set_sensitive(True)
+        self.fav_btn.set_sensitive(True)
+        self.save_fav_btn.set_sensitive(True)
         self.save_btn.set_sensitive(not item.is_animated)
 
         if item.is_animated:
@@ -1028,19 +1062,176 @@ class WalloraWindow(Adw.ApplicationWindow):
             scale.set_value(val)
         self._update_preview()
 
+    def _on_row_star_clicked(self, _btn, item: WallpaperItem):
+        self._current_item = item
+        self._on_toggle_favorite()
+
     def _on_toggle_favorite(self, *_):
         if not self._current_item:
+            self._show_toast("Najpierw wybierz tapetę z listy")
             return
         p = str(self._current_item.path)
         if self.config.is_favorite(p):
             self.config.remove_favorite(p)
+            if self.vault.is_ready():
+                self._show_toast("Usunięto z ulubionych (kopia w folderze zostaje)")
+            else:
+                self._show_toast("Usunięto z ulubionych")
         else:
             self.config.add_favorite(p)
+            if self.vault.auto_copy_enabled() and self.vault.is_ready():
+                self._copy_to_vault_async([self._current_item.path], after_star=True)
+            elif self.vault.auto_copy_enabled() and not self.vault.is_ready():
+                self._show_toast("W ulubionych. Wybierz folder kopii w Preferencjach, żeby nie stracić pliku.")
+            else:
+                self._show_toast("Dodano do ulubionych")
 
+        self._update_fav_button()
         self._refresh_grid()
-        # Re-select if needed
         if self._current_item:
-            self.file_label.set_text(p)
+            kind = "🎬 animacja" if self._current_item.is_animated else "🖼️ obraz"
+            self.file_label.set_text(f"{kind}  ·  {self._current_item.path}")
+
+    def _update_fav_button(self):
+        if not hasattr(self, "fav_btn"):
+            return
+        has_item = self._current_item is not None
+        self.fav_btn.set_sensitive(has_item)
+        if hasattr(self, "save_fav_btn"):
+            self.save_fav_btn.set_sensitive(has_item)
+        if has_item and self.config.is_favorite(str(self._current_item.path)):
+            self.fav_btn.set_label("★ W ulubionych")
+        else:
+            self.fav_btn.set_label("★ Do ulubionych")
+
+    def _on_save_favorite_copy(self, *_):
+        if not self._current_item:
+            self._show_toast("Wybierz tapetę")
+            return
+        self.config.add_favorite(str(self._current_item.path))
+        self._update_fav_button()
+        if not self.vault.is_ready():
+            self._pick_vault_folder(then_copy=[self._current_item.path])
+            return
+        self._copy_to_vault_async([self._current_item.path])
+
+    def _copy_to_vault_async(self, paths: list[Path], *, after_star: bool = False):
+        if getattr(self, "_vault_copy_busy", False):
+            self._show_toast("Kopiowanie ulubionych już trwa…")
+            return
+        if not paths:
+            self._show_toast("Brak tapet do skopiowania")
+            return
+        self._vault_copy_busy = True
+
+        def worker():
+            try:
+                result = self.vault.copy_paths(paths)
+
+                def done():
+                    self._vault_copy_busy = False
+                    copied = result["copied"]
+                    skipped = result["skipped"]
+                    failed = result["failed"]
+                    if after_star and copied == 0 and skipped and not failed:
+                        self._show_toast("W ulubionych (kopia już była w folderze)")
+                    elif copied and not failed:
+                        extra = f", {skipped} już było" if skipped else ""
+                        self._show_toast(f"Zapisano {copied} kopii ulubionych{extra}")
+                    elif copied or skipped:
+                        self._show_toast(
+                            f"Kopia: +{copied}, już było {skipped}, błędów {failed}"
+                        )
+                    elif failed:
+                        err = (result["errors"] or ["nie udało się skopiować"])[0]
+                        self._show_toast(err[:140])
+                    else:
+                        self._show_toast("Nic do skopiowania")
+                    self._refresh_vault_folder_row()
+                    return False
+
+                GLib.idle_add(done)
+            except Exception as e:
+                def fail():
+                    self._vault_copy_busy = False
+                    self._show_toast(f"Kopia ulubionych: {e}")
+                    return False
+
+                GLib.idle_add(fail)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _vault_folder_subtitle(self) -> str:
+        folder = self.vault.folder()
+        if folder and folder.is_dir():
+            return str(folder)
+        if folder:
+            return f"Folder nie istnieje: {folder}"
+        return "Nie wybrano — po reinstalacji tapety z cache znikną"
+
+    def _refresh_vault_folder_row(self):
+        if self._vault_folder_row is not None:
+            self._vault_folder_row.set_subtitle(self._vault_folder_subtitle())
+
+    def _pick_vault_folder(self, then_copy: Optional[list[Path]] = None, on_set=None):
+        dialog = Gtk.FileDialog(title="Folder na kopie ulubionych (poza systemem)")
+        parent = self._prefs_win if self._prefs_win is not None else self
+
+        def finish(dlg, result):
+            try:
+                folder = dlg.select_folder_finish(result)
+                if not folder:
+                    return
+                path = folder.get_path()
+                if not path:
+                    return
+                dest = self.vault.set_folder(path)
+                self._refresh_vault_folder_row()
+                self._refresh_folders_list()
+                self._show_toast(f"Folder kopii: {dest}")
+                if then_copy:
+                    self._copy_to_vault_async(then_copy)
+                if on_set:
+                    on_set(dest)
+            except Exception as e:
+                print("Vault folder selection error:", e)
+
+        dialog.select_folder(parent, None, finish)
+
+    def _use_suggested_vault_folder(self, then_copy: Optional[list[Path]] = None):
+        dest = self.vault.set_folder(self.vault.suggested_folder())
+        self._refresh_vault_folder_row()
+        self._refresh_folders_list()
+        self._show_toast(f"Folder kopii: {dest}")
+        if then_copy:
+            self._copy_to_vault_async(then_copy)
+
+    def _export_all_favorites(self, *_):
+        favs = [Path(p) for p in (self.config.get("favorites") or [])]
+        existing = [p for p in favs if p.is_file()]
+        if not existing:
+            self._show_toast("Nie masz jeszcze ulubionych do skopiowania")
+            return
+        if not self.vault.is_ready():
+            self._pick_vault_folder(then_copy=existing)
+            return
+        self._copy_to_vault_async(existing)
+
+    def _restore_favorites_from_vault(self, *_):
+        if not self.vault.is_ready():
+            self._pick_vault_folder(on_set=lambda _d: self._do_restore_favorites())
+            return
+        self._do_restore_favorites()
+
+    def _do_restore_favorites(self):
+        try:
+            result = self.vault.restore()
+        except Exception as e:
+            self._show_toast(f"Przywracanie: {e}")
+            return
+        self._refresh_folders_list()
+        self.library.scan(on_finished=self._on_scan_finished)
+        self._show_toast(result.get("msg") or "Przywrócono ulubione")
 
     # === Apply ===
 
@@ -1442,6 +1633,8 @@ class WalloraWindow(Adw.ApplicationWindow):
     def show_preferences(self):
         win = Adw.PreferencesWindow(transient_for=self)
         win.set_title("Preferencje Wallora")
+        self._prefs_win = win
+        win.connect("close-request", lambda *_: setattr(self, "_prefs_win", None) or False)
 
         page = Adw.PreferencesPage(title="Ogólne")
 
@@ -1474,6 +1667,57 @@ class WalloraWindow(Adw.ApplicationWindow):
         group.add(scaling_row)
 
         page.add(group)
+
+        # === Favorites vault (survive OS reinstall) ===
+        vault_group = Adw.PreferencesGroup(
+            title="Ulubione poza systemem",
+            description="Kopie ulubionych tapet w wybranym folderze "
+            "(drugi dysk, Nextcloud, pendrive, Dokumenty). "
+            "Po reinstalacji wskaż ten sam folder i kliknij Przywróć.",
+        )
+
+        self._vault_folder_row = Adw.ActionRow(
+            title="Folder kopii ulubionych",
+            subtitle=self._vault_folder_subtitle(),
+        )
+        pick_vault_btn = Gtk.Button(label="Wybierz…")
+        pick_vault_btn.set_valign(Gtk.Align.CENTER)
+        pick_vault_btn.add_css_class("flat")
+        pick_vault_btn.connect("clicked", lambda *_: self._pick_vault_folder())
+        self._vault_folder_row.add_suffix(pick_vault_btn)
+        vault_group.add(self._vault_folder_row)
+
+        suggest_btn = Gtk.Button(label="Utwórz folder w Dokumentach")
+        suggest_btn.set_tooltip_text(str(self.vault.suggested_folder()))
+        suggest_btn.connect("clicked", lambda *_: self._use_suggested_vault_folder())
+        vault_group.add(suggest_btn)
+
+        auto_copy_row = Adw.SwitchRow(
+            title="Kopiuj automatycznie przy ★",
+            subtitle="Każda nowa ulubiona ląduje od razu w folderze kopii",
+        )
+        auto_copy_row.set_active(self.vault.auto_copy_enabled())
+
+        def on_auto_copy(row, _p):
+            self.config.set("favorites_vault.auto_copy", row.get_active())
+
+        auto_copy_row.connect("notify::active", on_auto_copy)
+        vault_group.add(auto_copy_row)
+
+        export_btn = Gtk.Button(label="Skopiuj obecne ulubione do folderu")
+        export_btn.set_tooltip_text("Zapisuje wszystkie już oznaczone gwiazdką")
+        export_btn.connect("clicked", self._export_all_favorites)
+        vault_group.add(export_btn)
+
+        restore_btn = Gtk.Button(label="Przywróć ulubione z folderu")
+        restore_btn.set_tooltip_text(
+            "Po reinstalacji: dodaje folder do biblioteki i oznacza pliki jako ulubione"
+        )
+        restore_btn.add_css_class("suggested-action")
+        restore_btn.connect("clicked", self._restore_favorites_from_vault)
+        vault_group.add(restore_btn)
+
+        page.add(vault_group)
 
         # === On login ===
         login_group = Adw.PreferencesGroup(

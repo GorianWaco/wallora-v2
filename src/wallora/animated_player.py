@@ -49,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
-    app = Adw.Application(application_id="org.wallora.WallpaperPlayer")
+    app = Adw.Application(application_id="org.wallora.Wallora.Player")
     windows: list[Gtk.Window] = []
     media_streams: list = []
     # DESKTOP-type windows are ignored by Gtk.Application's "has open windows"

@@ -1,28 +1,33 @@
-Wallora - Zaawansowany menedżer tapet dla Linuksa
+Wallora 2 — menedżer tapet (także animowanych)
 
-INSTALACJA (dla znajomych)
+INSTALACJA Z GITHUBA
 
-1. Upewnij się, że masz zainstalowany Flatpak:
-   - Arch/Manjaro:     sudo pacman -S flatpak
-   - Fedora:            sudo dnf install flatpak
-   - Ubuntu/Debian:     sudo apt install flatpak
-   - openSUSE:          sudo zypper install flatpak
+1. Zainstaluj Flatpak (jeśli jeszcze nie masz):
+   - Arch / CachyOS / Manjaro:  sudo pacman -S flatpak
+   - Fedora:                    sudo dnf install flatpak
+   - Ubuntu / Debian:           sudo apt install flatpak
+   - openSUSE:                  sudo zypper install flatpak
 
-   Po instalacji zrestartuj sesję (wyloguj i zaloguj się ponownie).
+2. Dodaj Flathub (potrzebny runtime GNOME):
 
-2. Zainstaluj Wallora:
+   flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 
-   flatpak install --user Wallora.flatpak
+3. Pobierz Wallora-0.2.12.flatpak z:
+   https://github.com/GorianWaco/wallora-v2/releases/latest
 
-3. Uruchom program:
+4. Zainstaluj:
+
+   flatpak install --user Wallora-0.2.12.flatpak
+
+   Przy pierwszym razie Flatpak dociągnie środowisko GNOME (~400 MB).
+
+5. Uruchom z menu aplikacji albo:
 
    flatpak run org.wallora.Wallora
 
-To wszystko! Aplikacja działa jak normalny program.
+Aktualizacja: pobierz nowszy plik .flatpak i zainstaluj go ponownie
+(flatpak install --user Wallora-*.flatpak).
 
-Uwagi:
-- Przy pierwszym uruchomieniu może pobrać trochę zależności (runtime GNOME).
-- Program ma wbudowaną automatyczną zmianę tapet (działa nawet po zamknięciu okna).
-- Ikona powinna pojawić się w menu aplikacji.
+Jeśli animowane tapety nie odtwarzają wideo:
 
-Jeśli coś nie działa, daj znać autorowi.
+   flatpak install --user flathub org.freedesktop.Platform.codecs-extra//25.08-extra

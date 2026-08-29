@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.2.12 — tapeta po przelogowaniu, nie zombie z poprzedniej sesji
+
+### Naprawione
+- `mpv` startuje w nowej sesji procesowej, więc **przeżywa wylogowanie**. Po kolejnym logowaniu restore widział żywy PID, pisał „już działa” i **nie odpalał odtwarzacza** — okno było na martwym XWayland (`saw=False` w `desktop_pin.log`)
+- Restore wymaga okna na **bieżącym** `DISPLAY` / istniejącego `XAUTHORITY`. Stary proces jest zabijany i tapeta startuje od nowa
+- Przy końcu sesji graficznej `ExecStop=wallora --release-session` gasi odtwarzacz, ale zostawia autostart na następne logowanie
+
+## 0.2.11 — restore nie wyłącza sam siebie po logowaniu
+
+### Naprawione
+- `wallora --restore-animated` wołał `set_animated()` → `stop()` → `systemctl disable --now` i **zabijał własną usługę** zanim mpv zdążył wystartować. Stan tapety i autostart znikały przy każdym restarcie
+- Plakat (`set_wallpaper`) też wywoływał pełny `stop()` i kasował przywracanie
+- Usługa startowała z `WantedBy=default.target` (za wcześnie, bez `DISPLAY`/`WAYLAND_DISPLAY`). Teraz `WantedBy=graphical-session.target` i restore importuje środowisko z menedżera użytkownika / gnome-shell
+- Status „przywracanie aktywne” nie kłamie już, gdy plik `.service` leży na dysku, ale `systemctl is-enabled` jest `disabled`
+
+## 0.2.10 — restore po logowaniu na GNOME 50
+
+### Naprawione
+- GNOME 50 pomijało `org.wallora.Wallora.animated.desktop`, bo miało `X-GNOME-Autostart-Phase` (traktowane jako usługa sesji, której gnome-session już nie startuje). systemd-xdg-autostart-generator dopisywał wtedy `NotShowIn=GNOME` — tapeta nie wracała po zalogowaniu
+- Autostart jest zwykłą aplikacją XDG + własna usługa `wallora-restore-animated.service` (`WantedBy=default.target`)
+- Restore zapisuje `~/.cache/wallora/restore.log` i nie odpala dwóch odtwarzaczy naraz
+- Stary PID z poprzedniej sesji nie blokuje restore (sprawdzane jest, czy proces to naprawdę tapeta Wallory)
+
+## 0.2.9 — kopia ulubionych poza systemem
+
+### Dodane
+- Folder kopii ulubionych (drugi dysk / Nextcloud / Dokumenty / pendrive) — tapety przeżywają reinstalację
+- Preferencje: wybór folderu, auto-kopiowanie przy ★, „Skopiuj obecne ulubione”, „Przywróć z folderu”
+- Przycisk w sidebarze: „Zapisz kopię ulubionej…”
+- Indeks `wallora-favorites.json` w folderze kopii + `CZYTAJ-MNIE.txt`
+- Po dodaniu tego folderu do biblioteki ulubione wracają same
+- CLI: `--export-favorites [FOLDER]`, `--restore-favorites [FOLDER]`
+
+## 0.2.8 — restore po restarcie znowu jako tapeta, nie okno
+
+### Naprawione
+- Po logowaniu animacja nie zostaje zwykłym oknem mpv: `wallora --restore-animated` wychodził zanim wątek zdążył ustawić `_NET_WM_WINDOW_TYPE_DESKTOP`
+- Przypinanie okna jest teraz **osobnym procesem** (`python -m wallora.animated --pin-desktop`) — przeżywa koniec restore i ponawia wskazówki przez ~90 s (GNOME/XWayland resetuje je przy starcie)
+- Restore czeka na GNOME Shell + XWayland/EWMH zanim odpali mpv
+- Jeśli player już działa jako zwykłe okno, restore przypina go ponownie zamiast nic nie robić
+
 ## 0.2.7 — import tapet ze Steam (ekwipunek + wideo)
 
 ### Naprawione

@@ -63,9 +63,13 @@ class WallpaperSetter:
         image_path: Path | str,
         scaling: str = "fill",
         use_processed: bool = True,
+        stop_animated: bool = True,
     ) -> bool:
         """
         Set the wallpaper. image_path should be the already processed file.
+
+        stop_animated=False: used when setting the poster frame of a live
+        wallpaper — must not cancel restore-on-login.
         """
         image_path = Path(image_path).expanduser().resolve()
         if not image_path.exists():
@@ -87,7 +91,8 @@ class WallpaperSetter:
 
         # Static wallpaper must win over live video/GIF (and clear restore-on-login).
         # Stop *before* DE keys so the new image is visible immediately on GNOME.
-        self._stop_animated_if_running()
+        if stop_animated:
+            self._stop_animated_if_running()
 
         # GNOME / Cinnamon / Unity
         if "gnome" in self.desktop or "unity" in self.desktop or "cinnamon" in self.desktop:

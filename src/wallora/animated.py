@@ -29,11 +29,16 @@ from gi.repository import GLib
 from wallora.utils import is_video_file, VIDEO_EXTENSIONS
 
 MPV_DESKTOP_TITLE = "wallora-desktop-wallpaper"
+MPV_X11_CLASS = "wallora-desktop"
+PIN_MARKER = "--pin-desktop"
 
 
 PID_FILE = Path(GLib.get_user_cache_dir()) / "wallora" / "animated.pid"
 STATE_FILE = Path(GLib.get_user_cache_dir()) / "wallora" / "animated_state.json"
 POSTER_PATH = Path(GLib.get_user_cache_dir()) / "wallora" / "animated_poster.jpg"
+PIN_LOG = Path(GLib.get_user_cache_dir()) / "wallora" / "desktop_pin.log"
+RESTORE_LOG = Path(GLib.get_user_cache_dir()) / "wallora" / "restore.log"
+RESTORE_LOCK = Path(GLib.get_user_cache_dir()) / "wallora" / "restore.lock"
 
 
 def _run(cmd: list[str], **kwargs) -> bool:
@@ -129,10 +134,10 @@ class AnimatedWallpaperManager:
 
     def is_active(self) -> bool:
         if self._proc is not None and self._proc.poll() is None:
-            return True
-        # Also check PID file (daemon from previous run / detached)
+            if self._pid_belongs_to_current_session(self._proc.pid):
+                return True
         pid = self._read_pid()
-        if pid and self._pid_alive(pid):
+        if pid and self._pid_alive(pid) and self._pid_belongs_to_current_session(pid):
             return True
         return False
 
@@ -165,7 +170,10 @@ class AnimatedWallpaperManager:
             if path.suffix.lower() != ".gif":
                 return False, "To nie jest plik wideo/animowany"
 
-        self.stop()
+        # Do not cancel restore-on-login here. Full stop() runs
+        # `systemctl --user disable --now` and would SIGTERM the
+        # restore service that called us after login.
+        self.stop(cancel_restore=False)
 
         poster: Optional[Path] = None
         if set_poster:
@@ -236,31 +244,64 @@ class AnimatedWallpaperManager:
         Resume the last animated wallpaper after reboot / crash.
         Uses animated_state.json written by set_animated().
         """
-        if self.is_active():
-            return True, "Animowana tapeta już działa"
-
         state = self._read_state()
         if not state or not state.get("path"):
+            state = self._fallback_state()
+        if not state or not state.get("path"):
             return False, "Brak zapisanej animowanej tapety do przywrócenia"
-
-        path = Path(state["path"]).expanduser()
-        if not path.exists():
-            return False, f"Plik nie istnieje (może został usunięty): {path}"
 
         backend = state.get("backend")
         if backend in (None, "auto"):
             backend = None
 
-        return self.set_animated(
+        # Leftover mpv from the previous login stays under user systemd
+        # (start_new_session) but its XWayland is dead. A live PID is not
+        # enough — the window must exist on THIS display.
+        visible = self._player_visible_on_display()
+        if visible:
+            self._spawn_desktop_pin(MPV_DESKTOP_TITLE, duration=90.0)
+            self._wait_until_desktop_window(MPV_DESKTOP_TITLE, timeout=20.0)
+            return True, "Animowana tapeta już działa (ponownie przypięta do pulpitu)"
+
+        if backend == "mpvpaper" and self.is_active():
+            return True, "Animowana tapeta już działa (mpvpaper)"
+
+        if self._read_pid() or self._find_player_pids():
+            log_restore("killing leftover player from previous session")
+            self.stop(cancel_restore=False)
+
+        path = Path(state["path"]).expanduser()
+        if not path.exists():
+            return False, f"Plik nie istnieje (może został usunięty): {path}"
+
+        ok, msg = self.set_animated(
             path,
             mute=bool(state.get("mute", True)),
             loop=bool(state.get("loop", True)),
             set_poster=bool(state.get("set_poster", True)),
             backend=backend,
         )
+        if ok and (self._backend or backend) == "mpv-desktop":
+            if not self._wait_until_desktop_window(MPV_DESKTOP_TITLE, timeout=25.0):
+                log_restore("window missing after start, retrying once")
+                self.stop(cancel_restore=False)
+                ok, msg = self.set_animated(
+                    path,
+                    mute=bool(state.get("mute", True)),
+                    loop=bool(state.get("loop", True)),
+                    set_poster=bool(state.get("set_poster", True)),
+                    backend=backend,
+                )
+                self._wait_until_desktop_window(MPV_DESKTOP_TITLE, timeout=25.0)
+        return ok, msg
 
-    def stop(self) -> bool:
-        """Stop any running animated wallpaper and cancel restore-on-login."""
+    def stop(self, *, cancel_restore: bool = True) -> bool:
+        """Stop any running animated wallpaper.
+
+        cancel_restore=True (UI / --stop-animated / static wallpaper):
+        also clears saved state and removes login autostart.
+        cancel_restore=False: only kill the player so a new one can start.
+        """
         stopped = False
         had_persist = STATE_FILE.exists() or PID_FILE.exists()
 
@@ -331,16 +372,24 @@ class AnimatedWallpaperManager:
                             stopped = True
                     except (ValueError, ProcessLookupError, PermissionError):
                         pass
+                elif PIN_MARKER in line and "wallora.animated" in line:
+                    try:
+                        pid = int(line.split(None, 1)[0])
+                        if pid != os.getpid() and _term_then_kill(pid):
+                            stopped = True
+                    except (ValueError, ProcessLookupError, PermissionError):
+                        pass
         except Exception:
             pass
 
         self._clear_pid()
-        self._clear_state()
-        self._disable_restore_autostart()
+        if cancel_restore:
+            self._clear_state()
+            self._disable_restore_autostart()
         self._backend = None
         self._current_path = None
         # True if we killed a process or cleared saved restore state
-        return stopped or had_persist
+        return stopped or (had_persist if cancel_restore else stopped)
 
     # --- autostart (survive reboot) ---
 
@@ -386,7 +435,16 @@ class AnimatedWallpaperManager:
 
     @staticmethod
     def _x11_window_ids_by_title(title: str) -> list[str]:
+        return AnimatedWallpaperManager._x11_window_ids_matching(
+            title, MPV_X11_CLASS, MPV_DESKTOP_TITLE
+        )
+
+    @staticmethod
+    def _x11_window_ids_matching(*needles: str) -> list[str]:
         if not shutil.which("xprop"):
+            return []
+        wanted = [n for n in needles if n]
+        if not wanted:
             return []
         try:
             listing = subprocess.check_output(
@@ -400,13 +458,13 @@ class AnimatedWallpaperManager:
         for wid in re.findall(r"0x[0-9a-fA-F]+", listing):
             try:
                 info = subprocess.check_output(
-                    ["xprop", "-id", wid, "WM_NAME", "_NET_WM_NAME"],
+                    ["xprop", "-id", wid, "WM_NAME", "_NET_WM_NAME", "WM_CLASS"],
                     text=True,
                     stderr=subprocess.DEVNULL,
                 )
             except (subprocess.CalledProcessError, OSError):
                 continue
-            if title in info:
+            if any(needle in info for needle in wanted):
                 hits.append(wid)
         return hits
 
@@ -480,6 +538,56 @@ class AnimatedWallpaperManager:
                     return True
             time.sleep(0.15)
         return False
+
+    @classmethod
+    def x11_window_is_desktop(cls, title: str) -> bool:
+        for wid in cls._x11_window_ids_by_title(title):
+            try:
+                info = subprocess.check_output(
+                    ["xprop", "-id", wid, "_NET_WM_WINDOW_TYPE"],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                )
+            except (subprocess.CalledProcessError, OSError):
+                continue
+            if "_NET_WM_WINDOW_TYPE_DESKTOP" in info:
+                return True
+        return False
+
+    @classmethod
+    def _wait_until_desktop_window(cls, title: str, timeout: float = 20.0) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if cls.x11_window_is_desktop(title):
+                return True
+            time.sleep(0.25)
+        return False
+
+    def _spawn_desktop_pin(self, title: str, duration: float = 90.0) -> None:
+        """Detached helper: keeps DESKTOP hints after this process exits.
+
+        Autostart ``--restore-animated`` used to start a daemon thread and
+        exit immediately — GNOME then left mpv as a normal window.
+        """
+        src_root = str(Path(__file__).resolve().parent.parent)
+        env = os.environ.copy()
+        env["PYTHONPATH"] = src_root + os.pathsep + env.get("PYTHONPATH", "")
+        PIN_LOG.parent.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            sys.executable, "-m", "wallora.animated",
+            PIN_MARKER, title, str(duration),
+        ]
+        try:
+            log_f = open(PIN_LOG, "a", encoding="utf-8")
+            subprocess.Popen(
+                cmd,
+                stdout=log_f,
+                stderr=log_f,
+                start_new_session=True,
+                env=env,
+            )
+        except Exception as e:
+            print("desktop pin helper failed:", e)
 
     def _start_mpvpaper(self, path: Path, mute: bool, loop: bool) -> tuple[bool, str]:
         if not shutil.which("mpvpaper"):
@@ -583,17 +691,8 @@ class AnimatedWallpaperManager:
             )
             self._write_pid(self._proc.pid)
             self._backend = "mpv-desktop"
-
-            def apply_desktop():
-                ok = self._x11_mark_desktop_by_title(title, timeout=6.0)
-                # Re-apply a few times (GNOME may reset state on map)
-                if ok:
-                    time.sleep(0.8)
-                    self._x11_mark_desktop_by_title(title, timeout=2.0)
-                    time.sleep(1.5)
-                    self._x11_mark_desktop_by_title(title, timeout=2.0)
-
-            threading.Thread(target=apply_desktop, daemon=True).start()
+            # Must outlive this process: login restore exits right after start.
+            self._spawn_desktop_pin(title, duration=90.0)
             return True, "mpv-desktop"
         except Exception as e:
             return False, f"mpv-desktop: {e}"
@@ -684,7 +783,9 @@ class AnimatedWallpaperManager:
         try:
             from wallora.wallpaper_setter import WallpaperSetter
             setter = WallpaperSetter()
-            setter.set_wallpaper(poster, scaling="fill")
+            # Poster is part of starting an animation — do not treat it as
+            # "user chose a static wallpaper" (that would disable autostart).
+            setter.set_wallpaper(poster, scaling="fill", stop_animated=False)
         except Exception as e:
             print("Poster set failed:", e)
 
@@ -712,13 +813,106 @@ class AnimatedWallpaperManager:
     def _pid_alive(self, pid: int) -> bool:
         try:
             os.kill(pid, 0)
-            return True
         except OSError:
             return False
+        return self._pid_is_ours(pid)
+
+    @staticmethod
+    def _pid_environ(pid: int) -> dict[str, str]:
+        env: dict[str, str] = {}
+        try:
+            raw = Path(f"/proc/{pid}/environ").read_bytes()
+        except OSError:
+            return env
+        for item in raw.split(b"\0"):
+            if b"=" not in item:
+                continue
+            key_b, _, val_b = item.partition(b"=")
+            try:
+                env[key_b.decode()] = val_b.decode()
+            except UnicodeDecodeError:
+                continue
+        return env
+
+    @classmethod
+    def _pid_belongs_to_current_session(cls, pid: int) -> bool:
+        """False for leftover players still running after logout.
+
+        mpv is started in a new session so user systemd keeps it across
+        GNOME login. After re-login XAUTHORITY points at a new Mutter
+        file and the old window is gone.
+        """
+        env = cls._pid_environ(pid)
+        xauth = env.get("XAUTHORITY")
+        if xauth and not Path(xauth).exists():
+            return False
+        their_d = env.get("DISPLAY")
+        our_d = os.environ.get("DISPLAY")
+        if their_d and our_d and their_d != our_d:
+            return False
+        return True
+
+    def _player_visible_on_display(self) -> bool:
+        if not os.environ.get("DISPLAY"):
+            return False
+        return bool(self._x11_window_ids_by_title(MPV_DESKTOP_TITLE))
+
+    def _find_player_pids(self) -> list[int]:
+        pids: list[int] = []
+        try:
+            out = subprocess.check_output(["ps", "-eo", "pid,args"], text=True, errors="ignore")
+        except Exception:
+            return pids
+        for line in out.splitlines():
+            if not any(
+                marker in line
+                for marker in (
+                    MPV_DESKTOP_TITLE,
+                    "wallora-animated-wallpaper",
+                    "wallora.animated_player",
+                    "animated_player.py",
+                    "mpvpaper",
+                )
+            ):
+                continue
+            try:
+                pid = int(line.split(None, 1)[0])
+            except ValueError:
+                continue
+            if pid != os.getpid():
+                pids.append(pid)
+        return pids
+
+    @staticmethod
+    def _pid_is_ours(pid: int) -> bool:
+        """Stale PIDs get reused; only treat living wallora/mpv wallpaper as active."""
+        try:
+            raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        except OSError:
+            return False
+        cmd = raw.replace(b"\0", b" ").decode("utf-8", "ignore")
+        markers = (
+            MPV_DESKTOP_TITLE,
+            "wallora-animated-wallpaper",
+            "wallora.animated_player",
+            "animated_player.py",
+            "mpvpaper",
+            "xwinwrap",
+        )
+        return any(marker in cmd for marker in markers)
 
     def _write_state(self, data: dict):
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         STATE_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        try:
+            from wallora.config import Config
+
+            cfg = Config()
+            anim = dict(cfg.get("animated", {}) or {})
+            anim["last_path"] = data.get("path")
+            cfg.set("animated", anim)
+        except Exception:
+            pass
 
     def _read_state(self) -> Optional[dict]:
         try:
@@ -728,10 +922,40 @@ class AnimatedWallpaperManager:
             pass
         return None
 
+    def _fallback_state(self) -> Optional[dict]:
+        """Config last_path survives a wiped cache / failed restore."""
+        try:
+            from wallora.config import Config
+
+            cfg = Config()
+            anim = cfg.get("animated", {}) or {}
+            path = anim.get("last_path")
+            if not path:
+                return None
+            return {
+                "path": path,
+                "backend": anim.get("backend") or None,
+                "mute": bool(anim.get("mute", True)),
+                "loop": bool(anim.get("loop", True)),
+                "set_poster": bool(anim.get("set_poster", True)),
+            }
+        except Exception:
+            return None
+
     def _clear_state(self):
         try:
             if STATE_FILE.exists():
                 STATE_FILE.unlink()
+        except Exception:
+            pass
+        try:
+            from wallora.config import Config
+
+            cfg = Config()
+            anim = dict(cfg.get("animated", {}) or {})
+            if "last_path" in anim:
+                anim.pop("last_path", None)
+                cfg.set("animated", anim)
         except Exception:
             pass
 
@@ -739,3 +963,84 @@ class AnimatedWallpaperManager:
         # Do NOT stop on exit — animated wallpaper should keep running after UI close.
         # Only clear in-memory handle.
         self._proc = None
+
+
+def log_restore(msg: str) -> None:
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    line = f"{stamp} {msg}\n"
+    try:
+        RESTORE_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with RESTORE_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+    except Exception:
+        pass
+    print(line, end="")
+
+
+def acquire_restore_lock():
+    """Non-blocking lock so desktop autostart + systemd do not start two players."""
+    import fcntl
+
+    RESTORE_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(RESTORE_LOCK, "a+", encoding="utf-8")
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return None
+    return fh
+
+
+def maintain_x11_desktop_window(title: str, duration: float = 90.0) -> bool:
+    """Keep applying DESKTOP / click-through hints for `duration` seconds."""
+    PIN_LOG.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.time() + max(1.0, duration)
+    saw = False
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with PIN_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(f"{stamp} pin start title={title!r} duration={duration}\n")
+    except Exception:
+        pass
+
+    while time.time() < deadline:
+        if AnimatedWallpaperManager._x11_mark_desktop_by_title(title, timeout=1.2):
+            if not saw:
+                saw = True
+                try:
+                    with PIN_LOG.open("a", encoding="utf-8") as fh:
+                        fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} first pin ok\n")
+                except Exception:
+                    pass
+            time.sleep(1.5)
+        else:
+            time.sleep(0.3)
+
+    try:
+        with PIN_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(
+                f"{time.strftime('%Y-%m-%d %H:%M:%S')} pin end saw={saw}\n"
+            )
+    except Exception:
+        pass
+    return saw
+
+
+def _cli(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == PIN_MARKER:
+        title = argv[1] if len(argv) > 1 else MPV_DESKTOP_TITLE
+        try:
+            duration = float(argv[2]) if len(argv) > 2 else 90.0
+        except ValueError:
+            duration = 90.0
+        return 0 if maintain_x11_desktop_window(title, duration) else 1
+    print(
+        "Usage: python -m wallora.animated --pin-desktop [TITLE] [SECONDS]",
+        file=sys.stderr,
+    )
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli())

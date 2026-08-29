@@ -5,7 +5,7 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gio, GLib, Gtk
 
-from wallora import APP_ID
+from wallora import APP_ID, __version__
 from wallora.window import WalloraWindow
 
 
@@ -39,15 +39,15 @@ class WalloraApp(Adw.Application):
     def on_about(self, *args):
         about = Adw.AboutWindow(
             transient_for=self.window,
-            application_name="Wallora",
+            application_name="Wallora 2",
             application_icon=APP_ID,
-            developer_name="Wallora Team",
-            version="0.2.7",
-            comments="Tapety animowane + przywracanie po restarcie + Steam",
-            website="https://github.com/example/wallora",
-            issue_url="https://github.com/example/wallora/issues",
+            developer_name="GorianWaco",
+            version=__version__,
+            comments="Tapety animowane + kopia ulubionych poza systemem + Steam",
+            website="https://github.com/GorianWaco/wallora-v2",
+            issue_url="https://github.com/GorianWaco/wallora-v2/issues",
             license_type=Gtk.License.MIT_X11,
-            developers=["Grok + użytkownik"],
+            developers=["GorianWaco"],
             copyright="© 2026",
         )
         about.present()

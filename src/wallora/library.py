@@ -42,6 +42,12 @@ class Library:
         if not p.is_dir():
             return False
         self.config.add_library_folder(str(p))
+        try:
+            from wallora.favorites_vault import FavoritesVault
+
+            FavoritesVault(self.config).maybe_adopt_folder(p)
+        except Exception as e:
+            print("Favorites vault adopt failed:", e)
         return True
 
     def remove_folder(self, path: str):

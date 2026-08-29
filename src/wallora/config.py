@@ -38,6 +38,12 @@ DEFAULT_CONFIG = {
         "bg_fade": 0.1,
     },
     "favorites": [],
+    "favorites_vault": {
+        # Folder outside the OS install (second disk / Nextcloud / Dokumenty)
+        "folder": "",
+        "auto_copy": True,        # copy file when starring
+        "add_to_library": False,  # avoid duplicate thumbs next to originals
+    },
     "recent": [],  # list of paths
     "window_width": 1200,
     "window_height": 800,
@@ -49,6 +55,7 @@ DEFAULT_CONFIG = {
         "set_poster": True,       # Also set a static poster frame as DE wallpaper
         "backend": "auto",        # auto | mpvpaper | xwinwrap+mpv | gtk-player | mpv-window
         "include_in_slideshow": False,  # Videos usually need long intervals; off by default
+        "last_path": "",          # last animated file — restore fallback if cache is gone
     },
     "steam": {
         # Auto-download currently equipped profile wallpaper on app start
@@ -232,11 +239,79 @@ Hidden=false
     def is_random_on_login_enabled(self) -> bool:
         return self.get("random_on_login", False) and self._get_autostart_desktop_path().exists()
 
+    def _animated_systemd_unit_path(self) -> Path:
+        unit_dir = Path(GLib.get_user_config_dir()) / "systemd" / "user"
+        unit_dir.mkdir(parents=True, exist_ok=True)
+        return unit_dir / "wallora-restore-animated.service"
+
+    def _systemctl_user(self, *args: str) -> bool:
+        import shutil
+        import subprocess
+
+        cmd = ["systemctl", "--user", *args]
+        if os.path.exists("/.flatpak-info") or os.environ.get("FLATPAK_ID"):
+            spawn = shutil.which("flatpak-spawn")
+            if spawn:
+                cmd = [spawn, "--host", "systemctl", "--user", *args]
+        try:
+            rc = subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=8,
+            )
+            return rc.returncode == 0
+        except Exception:
+            return False
+
+    def _install_animated_systemd_unit(self) -> bool:
+        """GNOME 50+ skips XDG autostart marked as session services; systemd is reliable."""
+        unit_path = self._animated_systemd_unit_path()
+        exec_line = self.wallora_exec("--restore-animated")
+        stop_line = self.wallora_exec("--release-session")
+        desired = f"""[Unit]
+Description=Wallora - restore animated wallpaper after login
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart={exec_line}
+ExecStop={stop_line}
+TimeoutStartSec=180
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical-session.target
+"""
+        existing = unit_path.read_text(encoding="utf-8") if unit_path.exists() else ""
+        if existing != desired:
+            unit_path.write_text(desired, encoding="utf-8")
+            self._systemctl_user("daemon-reload")
+        if not self._systemctl_user("is-enabled", "--quiet", "wallora-restore-animated.service"):
+            return self._systemctl_user("enable", "wallora-restore-animated.service")
+        return True
+
+    def _remove_animated_systemd_unit(self) -> bool:
+        # Never `disable --now`: restore itself used to call this and get SIGTERM.
+        self._systemctl_user("disable", "wallora-restore-animated.service")
+        unit_path = self._animated_systemd_unit_path()
+        try:
+            if unit_path.exists():
+                unit_path.unlink()
+        except Exception:
+            return False
+        self._systemctl_user("daemon-reload")
+        return True
+
     def enable_animated_restore_on_login(self) -> bool:
         """Autostart that restarts the last animated wallpaper after login/reboot."""
         desktop_path = self._get_animated_autostart_path()
         exec_line = self.wallora_exec("--restore-animated")
 
+        # Do NOT set X-GNOME-Autostart-Phase. GNOME 49/50 treats that as a
+        # session service, skips the .desktop file, and systemd then adds
+        # NotShowIn=GNOME — so restore never runs after login.
         content = f"""[Desktop Entry]
 Type=Application
 Name=Wallora - Przywróć animowaną tapetę
@@ -245,13 +320,14 @@ Exec={exec_line}
 StartupNotify=false
 Terminal=false
 X-GNOME-Autostart-enabled=true
-X-GNOME-Autostart-Delay=3
+X-GNOME-Autostart-Delay=8
 X-KDE-autostart-after=panel
 Hidden=false
 """
 
         try:
             desktop_path.write_text(content, encoding="utf-8")
+            self._install_animated_systemd_unit()
             return True
         except Exception as e:
             print("Failed to create animated autostart:", e)
@@ -260,13 +336,18 @@ Hidden=false
     def disable_animated_restore_on_login(self) -> bool:
         """Remove animated restore autostart (e.g. when user stops animation)."""
         desktop_path = self._get_animated_autostart_path()
+        ok = True
         try:
             if desktop_path.exists():
                 desktop_path.unlink()
-            return True
         except Exception as e:
             print("Failed to remove animated autostart:", e)
-            return False
+            ok = False
+        if not self._remove_animated_systemd_unit():
+            ok = False
+        return ok
 
     def is_animated_restore_on_login_enabled(self) -> bool:
-        return self._get_animated_autostart_path().exists()
+        if self._get_animated_autostart_path().exists():
+            return True
+        return self._systemctl_user("is-enabled", "--quiet", "wallora-restore-animated.service")

@@ -1,56 +1,149 @@
-# Flatpak manifest for Wallora
-# Build with: flatpak-builder --user --install --force-clean build-dir flatpak/org.wallora.Wallora.yaml
+# Flatpak manifest for Wallora 2
+# Build: ./build-flatpak.sh
 
 app-id: org.wallora.Wallora
 runtime: org.gnome.Platform
-runtime-version: "47"
+runtime-version: "50"
 sdk: org.gnome.Sdk
 command: wallora
+separate-locales: false
 
 finish-args:
   - --share=ipc
-  - --socket=fallback-x11
+  - --share=network
+  - --socket=x11
   - --socket=wayland
+  - --socket=pulseaudio
+  - --socket=session-bus
   - --device=dri
-  # Needed for gsettings, dbus to set wallpaper, detect monitors etc.
-  - --talk-name=org.gnome.SettingsDaemon
-  - --talk-name=org.kde.kwin
-  - --talk-name=org.freedesktop.portal.*
-  - --filesystem=xdg-pictures:ro
-  - --filesystem=xdg-download:ro
-  - --filesystem=xdg-cache/wallora:create
-  - --filesystem=xdg-config/wallora:create
-  # Allow host commands for setting wallpaper in exotic WMs (swww, feh, etc.)
-  - --filesystem=host-os:ro
-  - --filesystem=host-etc:ro
-  # Some DEs need to see the actual image file outside sandbox
+  # Wallpaper folders, Steam cache, autostart, systemd --user units
   - --filesystem=home
+  # gsettings must write host dconf (GNOME wallpaper keys)
+  - --filesystem=xdg-run/dconf
+  - --filesystem=xdg-config/dconf:ro
+  - --talk-name=ca.desrt.dconf
+  - --env=DCONF_USER_CONFIG_DIR=.config/dconf
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.kde.plasmashell
+  - --talk-name=org.xfce.Xfconf
+  # Host systemctl --user (restore-on-login on GNOME 49/50)
+  - --talk-name=org.freedesktop.Flatpak
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /share/pkgconfig
+  - /share/man
+  - /share/gtk-doc
+  - /share/doc
+  - "*.a"
+  - "*.la"
 
 modules:
-  # Pillow is fetched during build (network allowed for module builds).
-  # This is the standard and simplest approach for pure-Python deps in Flatpak.
-  - name: python3-Pillow
+  - name: xprop
+    buildsystem: autotools
+    config-opts:
+      - --disable-static
+    sources:
+      - type: archive
+        url: https://www.x.org/archive/individual/app/xprop-1.2.8.tar.xz
+        sha256: d689e2adb7ef7b439f6469b51cda8a7daefc83243854c2a3b8f84d0f029d67ee
+
+  - name: libass
+    config-opts:
+      - --disable-static
+      - --enable-shared
+    sources:
+      - type: archive
+        url: https://github.com/libass/libass/releases/download/0.17.4/libass-0.17.4.tar.xz
+        sha256: 78f1179b838d025e9c26e8fef33f8092f65611444ffa1bfc0cfac6a33511a05a
+
+  - name: libplacebo
+    buildsystem: meson
+    config-opts:
+      - --default-library=shared
+      - -Ddemos=false
+      - -Dtests=false
+      - -Dvulkan=enabled
+      - -Dopengl=disabled
+      - -Dd3d11=disabled
+      - -Dglslang=disabled
+      - -Dshaderc=enabled
+      - -Dlcms=enabled
+    sources:
+      - type: git
+        url: https://github.com/haasn/libplacebo.git
+        tag: v7.360.1
+        commit: cee9b076f2c63104ccfd497fa79c39a867293ec4
+
+  - name: libXpresent
+    buildsystem: autotools
+    config-opts:
+      - --disable-static
+    sources:
+      - type: archive
+        url: https://www.x.org/archive/individual/lib/libXpresent-1.0.1.tar.xz
+        sha256:  b964df9e5a066daa5e08d2dc82692c57ca27d00b8cc257e8e960c9f1cf26231b
+
+  - name: mpv
+    buildsystem: meson
+    config-opts:
+      - -Dlibmpv=false
+      - -Dcplayer=true
+      - -Dlua=disabled
+      - -Djavascript=disabled
+      - -Dmanpage-build=disabled
+      - -Dhtml-build=disabled
+      - -Dcdda=disabled
+      - -Ddvdnav=disabled
+      - -Dvapoursynth=disabled
+      - -Dlibbluray=disabled
+      - -Duchardet=disabled
+      - -Drubberband=disabled
+      - -Dpulse=enabled
+      - -Dx11=enabled
+      - -Dwayland=enabled
+      - -Dgl=enabled
+      - -Dvulkan=enabled
+    sources:
+      - type: archive
+        url: https://github.com/mpv-player/mpv/archive/refs/tags/v0.41.0.tar.gz
+        sha256: ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209
+
+  - name: python3-pillow
     buildsystem: simple
     build-commands:
-      - pip3 install --verbose --prefix=${FLATPAK_DEST} "Pillow>=10.3" --no-build-isolation
-
+      - pip3 install --verbose --prefix=${FLATPAK_DEST} pillow-12.3.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/f7/62/de5bdd77d935331f4f802edc11e4d82950f642caad6cb2f949837b8560e2/pillow-12.3.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
+        sha256: 0847a763afefb695bc912d7c131e7e0632d4edc1d8698f58ddabec8e46b8b6d3
 
   - name: wallora
     buildsystem: simple
     build-commands:
-      - mkdir -p ${FLATPAK_DEST}/lib/python3.12/site-packages
-      - cp -r src/wallora ${FLATPAK_DEST}/lib/python3.12/site-packages/
+      - python3 -c "import sys, pathlib; p=pathlib.Path('${FLATPAK_DEST}')/'lib'/f'python{sys.version_info.major}.{sys.version_info.minor}'/'site-packages'; p.mkdir(parents=True, exist_ok=True)"
+      - |
+        PY_SITE=$(python3 -c "import sys; print('${FLATPAK_DEST}/lib/python' + str(sys.version_info.major) + '.' + str(sys.version_info.minor) + '/site-packages')")
+        mkdir -p "$PY_SITE"
+        cp -a src/wallora "$PY_SITE/wallora"
+        find "$PY_SITE/wallora" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
       - install -m 755 -D build-aux/wallora.sh ${FLATPAK_DEST}/bin/wallora
-      - install -Dm644 wallora.desktop ${FLATPAK_DEST}/share/applications/org.wallora.Wallora.desktop
-      - install -Dm644 data/icons/hicolor/scalable/apps/org.wallora.Wallora.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/org.wallora.Wallora.svg || true
-      - install -Dm644 data/icons/hicolor/128x128/apps/org.wallora.Wallora.png ${FLATPAK_DEST}/share/icons/hicolor/128x128/apps/org.wallora.Wallora.png || true
-      - install -Dm644 data/icons/hicolor/256x256/apps/org.wallora.Wallora.png ${FLATPAK_DEST}/share/icons/hicolor/256x256/apps/org.wallora.Wallora.png || true
-      - install -Dm644 data/icons/hicolor/512x512/apps/org.wallora.Wallora.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/org.wallora.Wallora.png || true
+      - install -Dm644 data/org.wallora.Wallora.desktop ${FLATPAK_DEST}/share/applications/org.wallora.Wallora.desktop
+      - install -Dm644 data/org.wallora.Wallora.metainfo.xml ${FLATPAK_DEST}/share/metainfo/org.wallora.Wallora.metainfo.xml
+      - install -Dm644 data/icons/hicolor/scalable/apps/org.wallora.Wallora.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/org.wallora.Wallora.svg
+      - install -Dm644 data/icons/hicolor/128x128/apps/org.wallora.Wallora.png ${FLATPAK_DEST}/share/icons/hicolor/128x128/apps/org.wallora.Wallora.png
+      - install -Dm644 data/icons/hicolor/256x256/apps/org.wallora.Wallora.png ${FLATPAK_DEST}/share/icons/hicolor/256x256/apps/org.wallora.Wallora.png
+      - install -Dm644 data/icons/hicolor/512x512/apps/org.wallora.Wallora.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/org.wallora.Wallora.png
     sources:
       - type: dir
         path: ../
-
-  - name: desktop-file-utils
-    buildsystem: simple
-    build-commands:
-      - desktop-file-validate ${FLATPAK_DEST}/share/applications/org.wallora.Wallora.desktop || true
+        skip:
+          - .git
+          - .flatpak-builder
+          - build-dir
+          - flatpak-repo
+          - Wallpaper
+          - __pycache__
+          - "*.flatpak"
+          - "*.pyc"
