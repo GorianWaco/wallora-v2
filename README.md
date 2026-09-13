@@ -32,7 +32,7 @@ Ręcznie z pliku `.flatpak`:
 4. Zainstaluj:
 
    ```bash
-   flatpak install --user Wallora-0.2.12.flatpak
+   flatpak install --user Wallora-0.2.13.flatpak
    ```
 
 Odinstalowanie:

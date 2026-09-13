@@ -33,12 +33,12 @@ INSTALACJA RĘCZNA
 
    flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 
-3. Pobierz Wallora-0.2.12.flatpak z:
+3. Pobierz Wallora-0.2.13.flatpak z:
    https://github.com/GorianWaco/wallora-v2/releases/latest
 
 4. Zainstaluj:
 
-   flatpak install --user Wallora-0.2.12.flatpak
+   flatpak install --user Wallora-0.2.13.flatpak
 
    Przy pierwszym razie Flatpak dociągnie środowisko GNOME (~400 MB).
 

@@ -64,20 +64,20 @@ Wejdź na:
 
 https://github.com/GorianWaco/wallora-v2/releases/latest
 
-i pobierz plik **`Wallora-0.2.12.flatpak`** (nazwa wersji może być nowsza).
+i pobierz plik **`Wallora-0.2.13.flatpak`** (nazwa wersji może być nowsza).
 
 ### Krok 4 — zainstaluj
 
 W katalogu z pobranym plikiem:
 
 ```bash
-flatpak install --user Wallora-0.2.12.flatpak
+flatpak install --user Wallora-0.2.13.flatpak
 ```
 
 albo ze skryptu, bez pobierania z sieci:
 
 ```bash
-./install.sh --local Wallora-0.2.12.flatpak
+./install.sh --local Wallora-0.2.13.flatpak
 ```
 
 ### Krok 5 — uruchom

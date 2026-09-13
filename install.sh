@@ -6,7 +6,7 @@
 #
 # Z katalogu projektu / po pobraniu skryptu:
 #   ./install.sh
-#   ./install.sh --local Wallora-0.2.12.flatpak
+#   ./install.sh --local Wallora-0.2.13.flatpak
 #   ./install.sh --uninstall
 
 set -euo pipefail

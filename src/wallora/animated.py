@@ -96,8 +96,15 @@ class AnimatedWallpaperManager:
 
     # --- public API ---
 
+    def _is_kde(self) -> bool:
+        from wallora.plasma import is_kde
+
+        return is_kde() or "kde" in self.desktop or "plasma" in self.desktop
+
     def available_backends(self) -> list[str]:
         backends = []
+        if self._is_kde():
+            backends.append("plasma-video")
         if shutil.which("mpvpaper"):
             backends.append("mpvpaper")
         if shutil.which("xwinwrap") and shutil.which("mpv"):
@@ -110,13 +117,16 @@ class AnimatedWallpaperManager:
         return backends
 
     def preferred_backend(self) -> str:
+        # Plasma: native wallpaper plugin (mpv DESKTOP sits behind plasmashell)
+        if self._is_kde():
+            return "plasma-video"
         # wlroots family → mpvpaper is ideal (true wallpaper layer)
         if any(x in self.desktop for x in ("hyprland", "hypr", "sway", "river", "wayfire")):
             if shutil.which("mpvpaper"):
                 return "mpvpaper"
         if self.session_type == "x11" and shutil.which("xwinwrap") and shutil.which("mpv"):
             return "xwinwrap+mpv"
-        # GNOME / Plasma Wayland: mpv as X11 DESKTOP window — solid looping
+        # GNOME Wayland: mpv as X11 DESKTOP window — solid looping
         if shutil.which("mpv") and os.environ.get("DISPLAY"):
             return "mpv-desktop"
         return "gtk-player"
@@ -124,6 +134,7 @@ class AnimatedWallpaperManager:
     def get_backend_label(self) -> str:
         b = self._backend or self.preferred_backend()
         labels = {
+            "plasma-video": "Plasma (wtyczka wideo)",
             "mpvpaper": "mpvpaper (warstwa Wayland)",
             "xwinwrap+mpv": "xwinwrap + mpv (X11)",
             "mpv-desktop": "mpv tapeta (Desktop + pętla)",
@@ -133,6 +144,16 @@ class AnimatedWallpaperManager:
         return labels.get(b, b)
 
     def is_active(self) -> bool:
+        if self._is_kde():
+            try:
+                from wallora.plasma import is_video_wallpaper_active
+
+                if is_video_wallpaper_active(self._current_path or (self._read_state() or {}).get("path")):
+                    return True
+                if is_video_wallpaper_active():
+                    return True
+            except Exception:
+                pass
         if self._proc is not None and self._proc.poll() is None:
             if self._pid_belongs_to_current_session(self._proc.pid):
                 return True

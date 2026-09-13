@@ -100,7 +100,7 @@ class WallpaperSetter:
 
         # KDE Plasma
         elif "kde" in self.desktop or "plasma" in self.desktop:
-            success = self._set_kde(stable_path)
+            success = self._set_kde(stable_path, scaling)
 
         # XFCE
         elif "xfce" in self.desktop:
@@ -126,8 +126,8 @@ class WallpaperSetter:
         if not success:
             success = self._set_gsettings_fallback(stable_path, scaling)
 
-        if success:
-            # Also notify via gsettings picture-uri (helps some tools)
+        if success and "kde" not in self.desktop and "plasma" not in self.desktop:
+            # Some GNOME-like tools watch this key. Do not touch it on Plasma.
             self._notify_gnome_compatible(stable_path)
 
         return success
@@ -166,20 +166,18 @@ class WallpaperSetter:
         ok = all(_run(c) for c in cmds)
         return ok
 
-    def _set_kde(self, path: Path) -> bool:
-        # plasma-apply-wallpaperimage is the cleanest
-        if shutil.which("plasma-apply-wallpaperimage"):
-            return _run(["plasma-apply-wallpaperimage", str(path)])
+    def _set_kde(self, path: Path, scaling: str = "fill") -> bool:
+        from wallora.plasma import set_image, set_lock_screen_image, unique_image_copy
 
-        # DBus fallback
-        script = f"""
-        var allDesktops = desktops();
-        d = allDesktops[0];
-        d.wallpaperPlugin = "org.kde.image";
-        d.currentConfigGroup = Array("Wallpaper", "org.kde.image", "General");
-        d.writeConfig("Image", "file:{path}");
-        """
-        return _run(["qdbus", "org.kde.plasmashell", "/PlasmaShell", "org.kde.PlasmaShell.evaluateScript", script])
+        cache = Path(GLib.get_user_cache_dir()) / "wallora"
+        try:
+            kde_path = unique_image_copy(path, cache)
+        except Exception:
+            kde_path = path
+        ok = set_image(kde_path, scaling=scaling)
+        if ok:
+            set_lock_screen_image(kde_path)
+        return ok
 
     def _set_xfce(self, path: Path, scaling: str) -> bool:
         # xfconf-query
@@ -288,6 +286,17 @@ class WallpaperSetter:
                 if uri.startswith("file://"):
                     return Path(uri[7:])
                 return Path(uri)
+
+        if "kde" in self.desktop or "plasma" in self.desktop:
+            try:
+                from wallora.plasma import wallpaper_config
+
+                cfg = wallpaper_config(0)
+                uri = str(cfg.get("Image") or "")
+                if uri.startswith("file://"):
+                    return Path(uri[7:])
+            except Exception:
+                pass
 
         # Try our stable cache
         stable = Path(GLib.get_user_cache_dir()) / "wallora" / "active_wallpaper.jpg"

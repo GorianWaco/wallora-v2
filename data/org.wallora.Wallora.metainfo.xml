@@ -53,6 +53,11 @@
     <category>GTK</category>
   </categories>
   <releases>
+    <release version="0.2.13" date="2026-09-13">
+      <description>
+        <p>KDE Plasma: native image and video wallpaper plugins instead of mpv behind the panel.</p>
+      </description>
+    </release>
     <release version="0.2.12" date="2026-08-29">
       <description>
         <p>Fix restore after logout so the wallpaper starts in the new session instead of a leftover process.</p>

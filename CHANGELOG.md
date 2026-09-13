@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.13 — Plasma: tapeta obraz i wideo bez mpv za panelem
+
+### Nowe
+- Na KDE Plasma statyczna tapeta idzie przez `plasma.py` (plugin obrazu + ekran blokady)
+- Animowane tapety na Plasma używają wtyczki wideo, a nie `mpv-desktop` za `plasmashell`
+
 ## 0.2.12 — tapeta po przelogowaniu, nie zombie z poprzedniej sesji
 
 ### Naprawione
